@@ -147,7 +147,3 @@ class SegmentNeurons():
         dff, median, bg = self._calculate_DFF(raw_signal)
 
         return roi_dict, raw_signal, dff
-
-    def _run_evk(self):
-        """Run segmentation for evoked activity."""
-        #TODO: to be implemented
