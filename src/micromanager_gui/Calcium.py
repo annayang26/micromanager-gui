@@ -129,7 +129,7 @@ class Calcium(QDialog):
                                       self.binning, self.pixel_size, self.objective, self.magnification,
                                       method="mean", frame_window_ptg=1, prom_pctg=0.25)
 
-
+        _ = self.analysis.compile_files(folder_name, "_compiled.csv", None, additional_name)
         # if len(self.folder_list) > 0:
         #     self.compile_data(self.folder_list[-1], "summary.txt", None, "_compiled.csv")
         #     del self.folder_list[-1]
