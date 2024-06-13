@@ -1,5 +1,6 @@
 import tensorflow as tf
 import tensorflow.keras.backend as K
+from PIL import Image
 from pathlib import Path
 import numpy as np
 import random
@@ -19,7 +20,7 @@ class SegmentNeurons():
         path = os.path.join(dir_path, f'unet_calcium_{img_size}.hdf5')
         self._model = tf.keras.models.load_model(path, custom_objects={"K": K})
         
-    def _segment(self, img_stack, minsize, background_label):
+    def _segment(self, img_stack: np.array, save_path: str):
         '''
         Predict the cell bodies using the trained NN model
         and further segment after removing small holes and objects
@@ -38,13 +39,15 @@ class SegmentNeurons():
         '''
         img_norm = np.max(img_stack, axis=0) / np.max(img_stack)
         img_predict = self._model.predict(img_norm[np.newaxis, :, :])[0, :, :]
+        pred_im = Image.fromarray(img_predict)
+        pred_im.save(save_path + "prediction.jpeg")
 
         if np.max(img_predict) > 0.3:
             # use Otsu's method to find the cooridnates of the cell bodies
             th = filters.threshold_otsu(img_predict)
             img_predict_th = img_predict > th
-            img_predict_remove_holes_th = morphology.remove_small_holes(img_predict_th, area_threshold=minsize * 0.3)
-            img_predict_filtered_th = morphology.remove_small_objects(img_predict_remove_holes_th, min_size=minsize)
+            img_predict_remove_holes_th = morphology.remove_small_holes(img_predict_th, area_threshold=100 * 0.3)
+            img_predict_filtered_th = morphology.remove_small_objects(img_predict_remove_holes_th, min_size=100)
             distance = ndi.distance_transform_edt(img_predict_filtered_th)
             local_max = feature.peak_local_max(distance,
                                                min_distance=10,
@@ -56,7 +59,10 @@ class SegmentNeurons():
             local_max_mask[tuple(local_max.T)] = True
             markers = morphology.label(local_max_mask)
             labels = segmentation.watershed(-distance, markers, mask=img_predict_filtered_th)
-            roi_dict, labels = self._getROIpos(labels, background_label)
+            roi_dict, labels = self._getROIpos(labels, 0)
+
+            label_im = Image.fromarray(labels)
+            label_im.save(save_path + "label.jpeg")
 
         return labels, roi_dict
 

@@ -63,6 +63,7 @@ class Calcium(QDialog):
         self.analysis: AnalyzeNeurons = None
         self.plot_data: PlotData = PlotData()
         self.folder_list: list = []
+        self._model_loaded: bool = False
 
     def _update_fname(self, file: str) -> None:
         '''Update the filename displayed on the selection window.'''
@@ -77,18 +78,18 @@ class Calcium(QDialog):
         self.folder_path = dlg.getExistingDirectory(None, "Select Folder")
         self._update_fname(self.folder_path)
 
-    def _load_module(self):
+    def _load_module(self, img_size: int):
         """Load Segmentation or Analyze."""
         if self._check_seg.isChecked():
             self.seg = SegmentNeurons()
-            self.seg._load_model()
+            self.seg._load_model(img_size)
+            self._model_loaded = True
 
         if self._check_ana.isChecked():
             self.analysis = AnalyzeNeurons()
 
     def _run(self):
         """Run."""
-        self._load_module()
         today = date.today().strftime("%y%m%d")
         additional_name = f"_{today}_{self.fname.text()}"
 
@@ -118,6 +119,10 @@ class Calcium(QDialog):
             self.img_size = img_size
 
             print(f'           Analyzing {self.img_name} at pos {pos}. shape: {rec.shape}')
+            if not self._model_loaded:
+                self._load_module(img_size)
+                print("___________________Loading model")
+
             save_path = os.path.join(folder_path, self.img_name)
             save_path = save_path + additional_name
 
