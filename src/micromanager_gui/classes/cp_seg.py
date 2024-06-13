@@ -141,8 +141,7 @@ class SegmentNeurons():
     def _run(self, img: np.ndarray, file_path: str) -> tuple[dict, dict]:
         """Run the entire segmentation process."""
         print("__________Segmenting___________")
-        frame = random.randint(0, img.shape[0])
-        masks = self._segment(img[frame], file_path)
+        masks = self._segment(img[100, :, :], file_path)
         roi_dict, masks = self._getROIpos(masks, 0)
         raw_signal = self._ROI_intensity(roi_dict, img)
         dff, median, bg = self._calculate_DFF(raw_signal)

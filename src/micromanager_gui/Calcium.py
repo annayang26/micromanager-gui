@@ -121,10 +121,11 @@ class Calcium(QDialog):
             save_path = os.path.join(folder_path, self.img_name)
             save_path = save_path + additional_name
 
+            t_frame = rec.shape[0]
             # if segmentation, run segmentation
             if self.seg and self.seg._check_model():
                 self.roi_dict, self.raw_signal, self.dff = self.seg._run(rec, save_path)
-                self.analysis.analyze(self.roi_dict, None, self.raw_signal, save_path, self.framerate,
+                self.analysis.analyze(self.roi_dict, None, self.raw_signal, save_path, t_frame, self.framerate,
                                       self.binning, self.pixel_size, self.objective, self.magnification,
                                       method="mean", frame_window_ptg=1, prom_pctg=0.25)
 
@@ -145,7 +146,7 @@ class Calcium(QDialog):
         exposure = r.sequence.channels[0].exposure
         framerate = 1 / exposure
 
-        binning = int(2048 / self.img_size)
+        binning = int(2048 / 1024)
 
         pixel_size = 0.325
 
