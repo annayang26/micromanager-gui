@@ -39,6 +39,7 @@ class _SnapLive(QToolBar):
         exp_wdg_layout.setSpacing(3)
         exp = QLabel("Exp:")
         self._exposure = DefaultCameraExposureWidget(mmcore=self._mmc)
+        self._exposure.spinBox.setFixedWidth(100)
         self._exposure.layout().setContentsMargins(0, 0, 0, 0)
         exp_wdg_layout.addWidget(exp)
         exp_wdg_layout.addWidget(self._exposure)
