@@ -34,7 +34,7 @@ dependencies = [
     "tifffile",
     "tqdm",
     "pyyaml",
-    "dotenv"
+    "python-dotenv"
 ]
 
 # extras
