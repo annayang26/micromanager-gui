@@ -34,7 +34,8 @@ dependencies = [
     "tifffile",
     "tqdm",
     "pyyaml",
-    "python-dotenv"
+    "python-dotenv",
+    "slack_bolt"
 ]
 
 # extras
