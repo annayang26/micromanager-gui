@@ -27,15 +27,15 @@ classifiers = [
 dynamic = ["version"]
 dependencies = [
     "pymmcore-widgets@git+https://github.com/fdrgsp/pymmcore-widgets.git@calcium",
-    "pymmcore-plus >=0.10.2",
+    "pymmcore-plus ==0.10.2",
     "qtpy",
     "vispy",
     "zarr",
     "tifffile",
     "tqdm",
     "pyyaml",
+    "slack_bolt",
     "python-dotenv",
-    "slack_bolt"
 ]
 
 # extras
@@ -63,8 +63,8 @@ homepage = "https://github.com/fdrgsp/micromanager-gui"
 repository = "https://github.com/fdrgsp/micromanager-gui"
 
 # same as console_scripts entry point
-# [project.scripts]
-# spam-cli = "spam:main_cli"
+[project.scripts]
+mmgui = "micromanager_gui.__main__:main"
 
 # Entry points
 # https://peps.python.org/pep-0621/#entry-points
