@@ -174,8 +174,9 @@ class PlateViewer(QMainWindow):
         plate_map_group_layout.addWidget(self._plate_map_btn)
         plate_map_group_layout.addStretch(1)
 
-        self._genotype_cond: dict | None = None
-        self._treatment_cond: dict | None = None
+        self._well_by_genotype: dict | None = None
+        self._well_by_treatment: dict | None = None
+        self._color_list: dict | None = None
 
         self._segmentation_wdg = _CellposeSegmentation(self)
         self._analysis_wdg = _AnalyseCalciumTraces(self)
@@ -343,7 +344,8 @@ class PlateViewer(QMainWindow):
             self._update_graphs_combo(combo_red=(analysis is None))
         else:
             self._update_plate_map()
-            if self._genotype_cond and self._treatment_cond and self._analysis_data:
+            if self._well_by_genotype and self._well_by_treatment\
+                and self._analysis_data:
                 pm = False
             else:
                 pm = True
@@ -587,8 +589,10 @@ class PlateViewer(QMainWindow):
 
     def _update_plate_map(self):
         """Update plate map."""
-        self._treatment_cond = self._plate_map_treatment._get_cond_list()
-        self._genotype_cond = self._plate_map_genotype._get_cond_list()
+        self._well_by_treatment, treatment_c = self._plate_map_treatment._get_cond_list()  # noqa: E501
+        self._well_by_genotype, gentoype_c = self._plate_map_genotype._get_cond_list()
+        self._color_list = {**treatment_c, **gentoype_c}
+        print(f'color list is {self._color_list}')
 
     def _on_scene_well_changed(self, value: Well | None) -> None:
         """Update the FOV table when a well is selected."""

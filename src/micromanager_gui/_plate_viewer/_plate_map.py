@@ -397,17 +397,23 @@ class PlateMapWidget(QWidget):
         self.setValue(data)
 
     # NOTE: should row and column be included?
-    def _get_cond_list(self) -> dict[str, dict[str]]:
+    def _get_cond_list(self) -> tuple[dict[str, list[str]],
+                                      dict[str, str]]:
         """Get a list of condtions."""
         wells = self.value()
         cond_list = {}
+        color_list = {}
 
         if len(wells) > 0:
             for well in wells:
                 cond = well.condition
+                color = well.color
                 if not cond_list.get(cond):
-                    cond_list[cond] = {'color': well.color,
-                                       'name': []}
-                cond_list[cond]['name'].append(well.name)
+                    cond_list[cond] = []
+                cond_list[cond].append(well.name)
 
-        return cond_list
+                if not color_list.get(cond):
+                    color_list[cond] = color
+
+        return cond_list, color_list
+

@@ -119,8 +119,10 @@ def compare_conditions(
     values = list(data_to_plot.values())
     # print(f"        group length: {len(groups)}, groups: {groups}")
     # print(f"        values length: {len(values)}, groups: {values[0]}")
-
-    bp = ax.boxplot(values, labels=groups, patch_artist=True)
+    width = 0.2
+    for index, group in enumerate(groups):
+        i = 0
+        bp = ax.bar(index-i*width, values, labels=groups, patch_artist=True)
     for patch, color in zip(bp['boxes'], colors):
         patch.set_facecolor(color)
 

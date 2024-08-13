@@ -66,6 +66,7 @@ class _CompareConditions(QWidget):
         self._graph: _GraphWidget_cond = parent
         self._geno_dict: dict | None = None
         self._treatment_dict: dict | None = None
+        self._color_list: dict | None = None
 
         self._group_sel = QComboBox()
         self._group_sel.addItems([" ", "Genotype", "Treatment"])
@@ -87,16 +88,21 @@ class _CompareConditions(QWidget):
         group = self._group_sel.currentText()
 
         if not self._treatment_dict and \
-                self._graph._plate_viewer._treatment_cond:
+                self._graph._plate_viewer._well_by_treatment:
             self._treatment_dict = \
-                self._graph._plate_viewer._treatment_cond
+                self._graph._plate_viewer._well_by_treatment
             self._graph._treatment_dict = self._treatment_dict
 
         if not self._geno_dict and \
-            self._graph._plate_viewer._genotype_cond:
+            self._graph._plate_viewer._well_by_genotype:
             self._geno_dict = \
-                self._graph._plate_viewer._genotype_cond
+                self._graph._plate_viewer._well_by_genotype
             self._graph._geno_dict = self._geno_dict
+
+        if not self._color_list and \
+            self._graph._plate_viewer._color_list:
+            self._color_list = self._graph._plate_viewer._color_list
+            self._graph._color_list = self._color_list
 
         if self._treatment_dict or self._geno_dict:
             if group == "Genotype":
@@ -116,6 +122,7 @@ class _GraphWidget_cond(QWidget):
         self._plate_viewer: PlateViewer = parent
         self._treatment_dict: dict = None
         self._geno_dict: dict = None
+        self._color_list: dict = None
 
         self._choose_groups = _CompareConditions(self)
         self._choose_metrics = _ChooseMetrics(self)
@@ -150,29 +157,31 @@ class _GraphWidget_cond(QWidget):
         colors_to_compare = []
         fovs_to_compare= []
         if group == "Genotype" and self._treatment_dict:
-            wells_to_compare = self._treatment_dict[condition]['name']
-            colors_to_plot = [values['color'] for values in self._geno_dict.values()]
+            wells_to_compare = self._treatment_dict[condition]
+            # colors_to_plot = [values['color'] for values in self._geno_dict.values()]
             # for well, color in zip(wells_to_compare, colors_to_plot):
             #     fovs_to_compare = [fov for fov in fovs if any(well in fov)]
             #     colors_to_compare.append(color)
         elif group == "Treatment" and self._geno_dict:
-            wells_to_compare = self._geno_dict[condition]['name']
-            colors_to_plot = [values['color']\
-                              for values in self._treatment_dict.values()\
-                                if values['name'] != 'background']
-            
+            wells_to_compare = self._geno_dict[condition]
+
+        colors_to_plot = self._color_list[condition]
+            # colors_to_plot = [values['color']\
+            #                   for values in self._treatment_dict.values()\
+            #                     if values!= 'background']
+
         ###TODO: find a way to link the color
 
-        elif condition == "All wells":
-            ## TODO: all the wells
-            return
+        # elif condition == "All wells":
+        #     ## TODO: all the wells
+        #     return
 
-        for well, color in zip(wells_to_compare, colors_to_plot):
-            for fov in fovs:
-                if well in fov:
-                    print(f" well: {well}, fov: {fov}")
-                    fovs_to_compare.append(fov)
-                    colors_to_compare.append(color)
+        # for well, color in zip(wells_to_compare, colors_to_plot):
+        #     for fov in fovs:
+        #         if well in fov:
+        #             print(f" well: {well}, fov: {fov}")
+        #             fovs_to_compare.append(fov)
+        #             colors_to_compare.append(color)
 
         # fovs_to_compare = [fov for fov in fovs if any(
         #     well in fov for well in wells_to_compare)]
@@ -187,7 +196,6 @@ class _GraphWidget_cond(QWidget):
 
         compare_conditions(self, data, x_axis=group, y_axis=condition,
                             colors=colors_to_plot, **COMBO_OPTIONS[metrics])
-
 
 
     def clear_plot(self) -> None:

@@ -91,8 +91,9 @@ def plot_traces(
         trace = get_trace(
             roi_data, dff, photobleach_corrected, used_for_bleach_correction
         )
-        total_frames = len(trace)
-        # print(f"        total frames: {total_frames}")
+        if trace:
+            total_frames = len(trace)
+            print(f"        total frames: {total_frames}")
 
         if trace is None:
             continue

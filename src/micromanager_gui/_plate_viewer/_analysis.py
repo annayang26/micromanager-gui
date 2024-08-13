@@ -467,9 +467,10 @@ class _AnalyseCalciumTraces(QWidget):
 
         # get position name from metadata
         well = meta[0].get("Event", {}).get("pos_name", f"pos_{str(p).zfill(4)}")
-        
+
         total_frames = data.shape[0]
-        binning, magnification, pixel_size, objective, exposure, framerate = self._extract_metadata(meta) 
+        binning, magnification, pixel_size, objective,\
+            exposure, framerate = self._extract_metadata(meta)
 
         # create the dict for the well
         if well not in self._analysis_data:
@@ -513,7 +514,8 @@ class _AnalyseCalciumTraces(QWidget):
             # compute the mean for each frame
             roi_trace = cast(np.ndarray, masked_data.mean(axis=1))
             roi_size_pixel = masked_data.shape[1]
-            roi_size_um = self._cell_size_in_um(roi_size_pixel, binning, pixel_size, objective, magnification)
+            roi_size_um = self._cell_size_in_um(roi_size_pixel, binning, pixel_size,
+                                                objective, magnification)
 
             # calculate the exponential decay for photobleaching correction
             exponential_decay = self._get_exponential_decay(roi_trace)
@@ -582,12 +584,12 @@ class _AnalyseCalciumTraces(QWidget):
             #ROIData
             iei = self._get_iei(start, framerate)
             mean_iei = np.mean(iei)
-            mean_iei_stdev = np.std(iei)         
+            mean_iei_stdev = np.std(iei)
             mean_amplitude = np.mean(amplitudes)
             mean_amplitude_stdev = np.std(amplitudes)
             frequency = len(peaks) / (total_frames/framerate)
             mean_raise_time = np.mean(raise_time)
-            mean_raise_time_stdev = np.std(raise_time)  
+            mean_raise_time_stdev = np.std(raise_time)
             mean_decay_time = np.mean(decay_time)
             mean_decay_time_stdev = np.std(decay_time)
 
