@@ -38,7 +38,7 @@ class Peaks(BaseClass):
 
     peak: int | None = None
     amplitude: float | None = None
-    raise_time: float | None = None
+    rise_time: float | None = None
     decay_time: float | None = None
     max_slope: float | None = None
     start: int | None = None
@@ -58,16 +58,18 @@ class ROIData(BaseClass):
     average_photobleaching_fitted_curve: list[float] | None = None
     average_popts: list[float] | None = None
     dff: list[float] | None = None
+    d_dff: list[float] | None = None
     frequency: float | None = None
     mean_amplitude: float | None = None
     mean_amplitude_stdev: float | None = None
-    mean_raise_time: float | None = None
-    mean_raise_time_stdev: float | None = None
+    mean_rise_time: float | None = None
+    mean_rise_time_stdev: float | None = None
     mean_decay_time: float | None = None
     mean_decay_time_stdev: float | None = None
     mean_iei: float | None = None
     mean_iei_stdev: float | None = None
     mean_max_slope: float | None = None
+    mean_max_slope_stdev: float | None = None
     global_connectivity: float | None = None
     condition_1: str | None = None
     condition_2: str | None = None

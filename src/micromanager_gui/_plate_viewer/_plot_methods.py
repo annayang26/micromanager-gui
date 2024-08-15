@@ -17,15 +17,18 @@ def get_trace(
     dff: bool,
     photobleach_corrected: bool,
     used_for_bleach_correction: bool,
+    d_dff: bool
 ) -> list[float] | None:
     """Get the appropriate trace based on the flags."""
     if used_for_bleach_correction:
         trace = roi_data.use_for_bleach_correction
         return trace[0] if trace is not None else None
-    elif dff and not photobleach_corrected:
+    elif dff and not photobleach_corrected and not d_dff:
         return roi_data.dff
     elif photobleach_corrected and not dff:
         return roi_data.bleach_corrected_trace
+    elif dff and d_dff:
+        return roi_data.d_dff
     else:
         return roi_data.raw_trace
 
@@ -47,7 +50,10 @@ def plot_traces(
     with_peaks: bool = False,
     used_for_bleach_correction: bool = False,
     raster: bool = False,
-    width: bool = False
+    width: bool = False,
+    with_starts: bool = False,
+    with_ends: bool = False,
+    d_dff: bool = False,
 ) -> None:
     """Plot various types of traces."""
     # Clear the figure
@@ -66,10 +72,16 @@ def plot_traces(
         title_parts.append("Photobleach Correction")
     if with_peaks:
         title_parts.append("Peaks")
+    if with_starts:
+        title_parts.append("Start")
+        if with_ends:
+            title_parts.append("Ends")
     if raster:
         title_parts.append("Raster Plot")
         if width:
             title_parts.append("with width")
+    if d_dff:
+        title_parts.append("denoised")
     ax.set_title(" - ".join(title_parts))
 
     count = 0
@@ -89,11 +101,10 @@ def plot_traces(
 
         roi_data = cast("ROIData", data[key])
         trace = get_trace(
-            roi_data, dff, photobleach_corrected, used_for_bleach_correction
+            roi_data, dff, photobleach_corrected, used_for_bleach_correction, d_dff
         )
         if trace:
             total_frames = len(trace)
-            print(f"        total frames: {total_frames}")
 
         if trace is None:
             continue
@@ -116,6 +127,25 @@ def plot_traces(
                 "x",
                 label=f"Peaks ROI {key}",
             )
+
+        if with_starts and roi_data.peaks is not None:
+            starts = [pk.start for pk in roi_data.peaks if pk.start is not None]
+            ax.plot(
+                starts,
+                np.array(trace)[starts]
+                + (count if normalize and not used_for_bleach_correction else 0),
+                ".",
+                c="r"
+            )
+            if with_ends:
+                ends = [pk.end for pk in roi_data.peaks if pk.end is not None]
+                ax.plot(
+                    ends,
+                    np.array(trace)[ends]
+                    + (count if normalize and not used_for_bleach_correction else 0),
+                    "^",
+                    c="g"
+                )
 
         if used_for_bleach_correction:
             curve = data[next(iter(data.keys()))].average_photobleaching_fitted_curve
@@ -152,7 +182,6 @@ def plot_traces(
                 spike_width.append(linewidth)
             else:
                 spike_width.append(1)
-
 
         count += COUNT_INCREMENT
 

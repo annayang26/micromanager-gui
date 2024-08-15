@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import xlsxwriter
 import json
 import logging
 import os
@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import tifffile
+# import statistics
 from fonticon_mdi6 import MDI6
+from oasis.functions import deconvolve
 from qtpy.QtCore import QSize, Signal
 from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
@@ -337,6 +339,7 @@ class _AnalyseCalciumTraces(QWidget):
         if self._plate_viewer is not None:
             self._plate_viewer.analysis_data = self._analysis_data
             self._plate_viewer._analysis_file_path = self._output_path.value()
+            self.output_csv()
 
     def _update_progress_label(self, time_str: str) -> None:
         """Update the progress label with elapsed time."""
@@ -471,6 +474,11 @@ class _AnalyseCalciumTraces(QWidget):
         total_frames = data.shape[0]
         binning, magnification, pixel_size, objective,\
             exposure, framerate = self._extract_metadata(meta)
+        framerate *= 1000
+        recording_time = total_frames/framerate# in seconds
+
+        ## NOTE: exposure time is in ms and framerate in fpms!!!
+        # print(f' exposure time: {exposure}, framerate: {framerate}, recording time: {recording_time}')
 
         # create the dict for the well
         if well not in self._analysis_data:
@@ -551,7 +559,7 @@ class _AnalyseCalciumTraces(QWidget):
         logger.info(f"Performing Bleaching Correction for Well {well}.")
         for label_value in tqdm(
             labels_range, desc=f"Performing Bleaching Correction for Well {well}"
-        ):
+            ):
             if self._check_for_abort_requested():
                 break
 
@@ -568,40 +576,44 @@ class _AnalyseCalciumTraces(QWidget):
             )
 
             # calculate the dF/F TODO: how to calculate F0?
-            F0 = np.min(bleach_corrected)
-            dff = (bleach_corrected - F0) / F0
+            # F0 = np.min(bleach_corrected)
+            # dff = (bleach_corrected - F0) / F0
+            dff = self.calculate_dff(bleach_corrected)
+            d_dff, _, _, _, _= deconvolve(dff,  g=(None,None), penalty=1)
 
-            prominence = np.mean(dff) * 0.35
+            prominence = np.mean(d_dff) * 0.2
             # find the peaks in the bleach corrected trace
-            peaks = self._find_peaks(dff, prominence=prominence) # for one ROI
+            peaks = self._find_peaks(d_dff, prominence=prominence) # for one ROI
 
             # Peaks
-            amplitudes, start, end, new_peaks = self._get_amplitude(dff, peaks)
-            max_slopes = self._get_max_slope(dff, new_peaks, start)
-            raise_time = self._get_raise_time(new_peaks, start, framerate)
+            amplitudes, start, end, new_peaks = self._get_amplitude(d_dff, peaks)
+            max_slopes = self._get_max_slope(d_dff, new_peaks, start)
+            rise_time = self._get_rise_time(d_dff, amplitudes, new_peaks, start, framerate)
             decay_time = self._get_decay_time(new_peaks, end, framerate)
 
             #ROIData
-            iei = self._get_iei(start, framerate)
+            iei = self._get_iei(new_peaks, framerate)
             mean_iei = np.mean(iei)
             mean_iei_stdev = np.std(iei)
             mean_amplitude = np.mean(amplitudes)
             mean_amplitude_stdev = np.std(amplitudes)
-            frequency = len(peaks) / (total_frames/framerate)
-            mean_raise_time = np.mean(raise_time)
-            mean_raise_time_stdev = np.std(raise_time)
+            frequency = len(peaks) / (recording_time) # events per second
+            mean_rise_time = np.mean(rise_time)
+            mean_rise_time_stdev = np.std(rise_time)
             mean_decay_time = np.mean(decay_time)
             mean_decay_time_stdev = np.std(decay_time)
+            # mean_max_slope = np.mean(max_slopes)
+            # mean_max_slope_stdev = np.std(max_slopes)
 
             # store the analysis data
             update = data.replace(
                 average_photobleaching_fitted_curve=average_fitted_curve.tolist(),
                 average_popts=average_popts.tolist(),
                 bleach_corrected_trace=bleach_corrected.tolist(),
-                peaks=[Peaks(peak=new_peaks[i], 
+                peaks=[Peaks(peak=new_peaks[i],
                              amplitude=amplitudes[i],
                              max_slope=max_slopes[i],
-                             raise_time=raise_time[i],
+                             rise_time=rise_time[i],
                              decay_time=decay_time[i],
                              start=start[i],
                              end=end[i]
@@ -609,13 +621,16 @@ class _AnalyseCalciumTraces(QWidget):
                 mean_amplitude=mean_amplitude,
                 mean_amplitude_stdev=mean_amplitude_stdev,
                 frequency=frequency,
-                mean_raise_time=mean_raise_time,
-                mean_raise_time_stdev=mean_raise_time_stdev,
+                mean_rise_time=mean_rise_time,
+                mean_rise_time_stdev=mean_rise_time_stdev,
                 mean_decay_time=mean_decay_time,
                 mean_decay_time_stdev=mean_decay_time_stdev,
                 mean_iei=mean_iei,
                 mean_iei_stdev=mean_iei_stdev,
+                # mean_max_slope=mean_max_slope,
+                # mean_max_slope_stdev=mean_max_slope_stdev,
                 dff=dff.tolist(),
+                d_dff=d_dff.tolist()
             )
             self._analysis_data[well][str(label_value)] = update
 
@@ -632,6 +647,28 @@ class _AnalyseCalciumTraces(QWidget):
 
         # update the progress bar
         self.progress_bar_updated.emit()
+
+    def calculate_dff(self, pc_trace):
+        dff = []
+        bg, median = self._calculate_bg(pc_trace, 100)
+        bg = list(bg)
+        dff = (pc_trace - bg)/bg
+        dff = dff - np.min(dff)
+
+        return dff
+
+    def _calculate_bg(self, f: np.ndarray, window: int):
+        background = np.zeros_like(f)
+        background[0] = f[0]
+        median = [background[0]]
+        for y in range(1, len(f)):
+            x = y - window
+            if x < 0:
+                x = 0
+            lower_quantile = f[x:y] <= np.median(f[x:y])
+            background[y] = np.mean(f[x:y][lower_quantile])
+            median.append(np.median(f[x:y]))
+        return background, median
 
     def _smooth_and_normalize(self, trace: np.ndarray) -> np.ndarray:
         """Smooth and normalize the trace between 0 and 1."""
@@ -813,9 +850,8 @@ class _AnalyseCalciumTraces(QWidget):
 
         if peaks:
             dff_deriv = np.diff(dff)
-            len_dff = len(dff)
             len_dff_deriv = len(dff_deriv)
-            
+
             for peak in peaks:
                 start_index = peak
                 end_index = peak
@@ -828,7 +864,9 @@ class _AnalyseCalciumTraces(QWidget):
                         total_count += 1
                         if start_index in peaks:
                             negative_count = 0
-                            while start_index < len_dff_deriv and dff_deriv[start_index] < 0 and negative_count < neg_reset_num:
+                            while start_index < len_dff_deriv and\
+                                  dff_deriv[start_index] < 0 and\
+                                      negative_count < neg_reset_num:
                                 start_index += 1
                                 if dff_deriv[start_index] < 0:
                                     negative_count += 1
@@ -867,7 +905,8 @@ class _AnalyseCalciumTraces(QWidget):
 
                 spk_to_end = dff[peak:(end_index + 1)]
                 start_to_spk = dff[start_index:peak]
-                f_start_index = int(peak - (len(start_to_spk) - (np.argmin(start_to_spk) + 1)))
+                f_start_index = int(peak - (len(start_to_spk) -
+                                            (np.argmin(start_to_spk) + 1)))
                 f_end_index = int(peak + np.argmin(spk_to_end))
                 amplitude = dff[peak] - dff[f_start_index]
 
@@ -892,13 +931,11 @@ class _AnalyseCalciumTraces(QWidget):
                 peak_index = peaks[i]
                 base_index = bases[i]
 
-                # print(f"            peak index: {peak_index}, base_index: {base_index}")
                 slope_window = dff[base_index:(peak_index + 1)]
                 slope_window_a = slope_window[:-1]
                 slope_window_b = slope_window[1:]
                 max_slope = max([b-a for a,b in zip(slope_window_a, slope_window_b)])
                 max_slopes.append(max_slope)
-                # print(f"           max slope is {max_slope}")
 
         return max_slopes
 
@@ -912,30 +949,32 @@ class _AnalyseCalciumTraces(QWidget):
 
         return cell_size_um
 
-    # NOTE: iei here is the time between the start index of each peak
-    # the old is between each peak
-    def _get_iei(self, start_indices: list[int], framerate: float) -> list[float]:
+    # IEI: peak to peak
+    def _get_iei(self, peaks: list[int], framerate: float) -> list[float]:
         """Calculate the interevent interval."""
         iei = []
-
-        iei_frames = np.diff(np.array(start_indices))
-
-        if framerate:
-            iei.append(iei_frames/framerate)
-
-        else:
-            iei.append(iei_frames)
+        iei_frames = np.diff(np.array(peaks))
+        iei.append(iei_frames/framerate)
 
         return iei
 
     # NOTE: raise time here is from base to peak;
-    # FluoroSNNAO uses from base to max_slope point
-    def _get_raise_time(self, peaks: list[int], start: list[int], framerate: float
-                        ) -> list[float]:
+    # FluoroSNNAP uses from base to max_slope point
+    def _get_rise_time(self, dff: list[float], amplitude: list[float], peaks: list[int],
+                       start: list[int], framerate: float) -> list[float]:
         """Get Raise Time for each peak."""
-        raise_time = [((peaks[i] - start[i] + 1)/framerate) for i in range(len(peaks))]
+        rise_time = []
 
-        return raise_time
+        # NOTE: time to reach half of amplitude
+        for amp, peak, s in zip(amplitude, peaks, start):
+            limit_range = int((peak + 1 - s)/5)
+            rise_range = dff[s+limit_range:(peak+1)-limit_range]
+            half_amp = amp/2 + rise_range[0]
+            half_amp_idx = np.argmin([abs(signal - half_amp) for signal in rise_range])
+            rise_time.append((limit_range+half_amp_idx)/framerate) #s
+        # rise_time = [((peaks[i] - start[i] + 1)/framerate) for i in range(len(peaks))]
+
+        return rise_time
 
     def _get_decay_time(self, peaks: list[int], end: list[int], framerate: float
                         ) -> list[float]:
@@ -954,5 +993,227 @@ class _AnalyseCalciumTraces(QWidget):
         framerate = 1 / exposure
 
         return binning, magnification, pixel_size, objective, exposure, framerate
+
+    def output_csv(self):
+        """Save csv files of the data."""
+        exp_name = Path(self._output_path.value()).parent.name
+        file_path = Path(self._output_path.value()) / f"{exp_name}_FOVdata.xlsx"
+        # print(f' file path: {file_path}')
+        # print(f'        plate_map: {self._plate_map_data.keys()}')
+        # print(f'        plate_map values: {self._plate_map_data.values()}')
+        with xlsxwriter.Workbook(file_path, {'nan_inf_to_errors': True}) as wkbk:
+            wkst1 = wkbk.add_worksheet('Amplitude')
+            wkst2 = wkbk.add_worksheet('Cell Size (um)')
+            wkst3 = wkbk.add_worksheet('Frequency (events/s)')
+            wkst4 = wkbk.add_worksheet('IEI(s)')
+            # wkst5 = wkbk.add_worksheet('Max Slope')
+            wkst6 = wkbk.add_worksheet('Rise Time(s)')
+            # wkst7 = wkbk.add_worksheet('Decay Time')
+
+            wkst_list = [
+                wkst1, wkst2, wkst3, wkst4, wkst6,
+            ]
+
+            for wkst in wkst_list:
+                wkst.write(0, 0, "Experiment Name")
+                wkst.write(0, 1, f"{exp_name}")
+
+            data_by_metrics = self._compile_metric_data()
+
+            for wkst, metrics in zip(wkst_list, data_by_metrics):
+                col = 0
+                for key, values in metrics.items():
+                    row = 3
+                    wkst.write(row, col, key)
+                    row += 1
+                    for value in values:
+                        wkst.write(row, col, value)
+                        row += 1
+                    col += 1
+
+            # mean_amplitude_dict = data_by_metrics["mean_amplitude"]
+            # mean_cell_size_dict = data_by_metrics["mean_cell_size"]
+            # mean_frequency_dict = data_by_metrics["mean_frequency"]
+            # mean_max_slope_dict = data_by_metrics["mean_max_slope"]
+            # mean_iei_dict = data_by_metrics["mean_iei"]
+            # mean_rise_time_dict = data_by_metrics["mean_rise_time"]
+
+    def _compile_conditions(self) -> dict[str, list[str]]:
+        cond_dict = {}
+        well_dict = {}
+        for key, value in self._plate_map_data.items():
+            condition = f"{value["condition_1"]}_{value["condition_2"]}"
+            if condition not in cond_dict:
+                cond_dict[condition] = []
+            cond_dict[condition].append(key)
+
+            if key not in well_dict:
+                well_dict[key] = condition
+
+        # cond_dict = {"CRISPR_UT": ['B2', 'C2'],
+        #              "CRISPR_VC": ['B3', 'C3'],
+        #              ...
+        # }
+        # well_dict = {"B2": "CRISPR_UT",
+        #              "B3": "CRISPR_VC",
+        #              "B4": "CRISPR_0.2nM_Rap"
+
+        # }
+        return cond_dict, well_dict
+
+    def _compile_well_data(self):
+        _, well_dict = self._compile_conditions()
+
+        well_data = {}
+        for fov, fov_dict in self._analysis_data.items():
+            well = fov[:2]
+            if well in well_dict:
+                condition = well_dict[well]
+
+                if condition not in well_data:
+                    well_data[condition] = {}
+
+                if fov not in well_data[condition]:
+                    well_data[condition][fov] = {}
+
+                amplitude_list = [roiData.mean_amplitude for roiData in fov_dict.values()]
+                cell_size_list = [roiData.cell_size for roiData in fov_dict.values()]
+                frequency_list = [roiData.frequency for roiData in fov_dict.values()]
+                max_slope_list = [roiData.mean_max_slope for roiData in fov_dict.values()]
+                iei_list = [roiData.mean_iei for roiData in fov_dict.values()]
+                rise_time_list = [roiData.mean_rise_time for roiData in fov_dict.values()]
+
+                mean_amplitude_fov = np.mean(amplitude_list)
+                mean_cell_size_fov = np.mean(cell_size_list)
+                mean_frequency_fov = np.mean(frequency_list)
+                mean_max_slope_fov = np.mean(max_slope_list)
+                mean_iei_fov = np.mean(iei_list)
+                mean_rise_time_fov = np.mean(rise_time_list)
+
+                well_data[condition][fov]["mean_amplitude"] = mean_amplitude_fov
+                well_data[condition][fov]["mean_cell_size"] = mean_cell_size_fov
+                well_data[condition][fov]["mean_frequency"] = mean_frequency_fov
+                well_data[condition][fov]["mean_max_slope"] = mean_max_slope_fov
+                well_data[condition][fov]["mean_iei"] = mean_iei_fov
+                well_data[condition][fov]["mean_rise_time"] = mean_rise_time_fov
+
+        return well_data
+
+        # well_data = {
+        #     "CRISPR_UT": {
+        #         "B2_0000": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
+        #         "B2_0001": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
+        #         "C2_0000": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
+        #         "C2_0001": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
+        #         ...
+        #     },
+        #     "CRISPR_VC": {
+        #         "B3_0000": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
+        #         "B3_0001": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
+        #         ...
+        #     }
+        # }
+
+        # analysis_data = {
+        #     "B2_0000": {
+        #         "1": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
+        #         "2": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
+        #         ...
+        #     },
+        #     "B2_0001": {
+        #         "1": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
+        #         "2": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
+        #         ...
+        #     },
+        #     "B2_0002": {
+        #         "1": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
+        #         "2": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
+        #         ...
+        #     },
+        #     ...
+        # }
+
+    def _compile_metric_data(self):
+        _, well_dict = self._compile_conditions()
+        data_by_metrics = []
+        mean_amplitude_dict = {}
+        mean_cell_size_dict = {}
+        mean_frequency_dict = {}
+        # mean_max_slope_dict = {}
+        mean_rise_time_dict = {}
+        mean_iei_dict = {}
+
+        for fov, fov_dict in self._analysis_data.items():
+            well = fov[:2]
+            if well in well_dict:
+                condition = well_dict[well]
+
+                amplitude_list = [roiData.mean_amplitude for roiData in fov_dict.values()]
+                cell_size_list = [roiData.cell_size for roiData in fov_dict.values()]
+                frequency_list = [roiData.frequency for roiData in fov_dict.values()]
+                # max_slope_list = [roiData.mean_max_slope for roiData in fov_dict.values()]
+                iei_list = [roiData.mean_iei for roiData in fov_dict.values()]
+                rise_time_list = [roiData.mean_rise_time for roiData in fov_dict.values()]
+
+                mean_amplitude_fov = np.mean(amplitude_list, dtype=np.float64)
+                mean_cell_size_fov = np.mean(cell_size_list, dtype=np.float64)
+                mean_frequency_fov = np.mean(frequency_list, dtype=np.float64)
+                # mean_max_slope_fov = np.mean(max_slope_list)
+                mean_iei_fov = np.nanmean(iei_list, dtype=np.float64)
+                print(f'            iei_fov mean: {mean_iei_fov}')
+                mean_rise_time_fov = np.mean(rise_time_list, dtype=np.float64)
+
+                if condition not in mean_amplitude_dict:
+                    mean_amplitude_dict[condition] = []
+                mean_amplitude_dict[condition].append(mean_amplitude_fov)
+
+                if condition not in mean_cell_size_dict:
+                    mean_cell_size_dict[condition] = []
+                mean_cell_size_dict[condition].append(mean_cell_size_fov)
+
+                if condition not in mean_frequency_dict:
+                    mean_frequency_dict[condition] = []
+                mean_frequency_dict[condition].append(mean_frequency_fov)
+
+                if condition not in mean_iei_dict:
+                    mean_iei_dict[condition] = []
+                mean_iei_dict[condition].append(mean_iei_fov)
+
+                # if condition not in mean_max_slope_dict:
+                #     mean_max_slope_dict[condition] = []
+                # mean_max_slope_dict[condition].append(mean_max_slope_fov)
+
+                if condition not in mean_rise_time_dict:
+                    mean_rise_time_dict[condition] = []
+                mean_rise_time_dict[condition].append(mean_rise_time_fov)
+
+        data_by_metrics.append(mean_amplitude_dict)
+        data_by_metrics.append(mean_cell_size_dict)
+        data_by_metrics.append(mean_frequency_dict)
+        data_by_metrics.append(mean_iei_dict)
+        data_by_metrics.append(mean_rise_time_dict)
+        # data_by_metrics["mean_amplitude"] = mean_amplitude_dict
+        # data_by_metrics["mean_cell_size"] = mean_cell_size_dict
+        # data_by_metrics["mean_frequency"] = mean_frequency_dict
+        # data_by_metrics["mean_max_slope"] = mean_max_slope_dict
+        # data_by_metrics["mean_iei"] = mean_iei_dict
+        # data_by_metrics["mean_rise_time"] = mean_rise_time_dict
+
+        return data_by_metrics
+
+        # mean_amplitude={
+        #     "CRISPR_UT": [0.1, 0.3, 0.5, 0.4],
+        #     "CRISPR_VC": [0.3, 0.5, 0.5, 0.1],
+        #     ...
+        # },
+        # mean_cell_size={
+        #     "CRISPR_UT": [0.1, 0.3, 0.5, 0.4],
+        #     "CRISPR_VC": [0.3, 0.5, 0.5, 0.1],
+        #     ...
+        # }
+        # }
+
+
+
 
 
