@@ -587,7 +587,7 @@ class _AnalyseCalciumTraces(QWidget):
 
             # Peaks
             amplitudes, start, end, new_peaks = self._get_amplitude(d_dff, peaks)
-            max_slopes = self._get_max_slope(d_dff, new_peaks, start)
+            # max_slopes = self._get_max_slope(d_dff, new_peaks, start)
             rise_time = self._get_rise_time(d_dff, amplitudes, new_peaks, start, framerate)
             decay_time = self._get_decay_time(new_peaks, end, framerate)
 
@@ -612,7 +612,7 @@ class _AnalyseCalciumTraces(QWidget):
                 bleach_corrected_trace=bleach_corrected.tolist(),
                 peaks=[Peaks(peak=new_peaks[i],
                              amplitude=amplitudes[i],
-                             max_slope=max_slopes[i],
+                            #  max_slope=max_slopes[i],
                              rise_time=rise_time[i],
                              decay_time=decay_time[i],
                              start=start[i],
@@ -983,7 +983,7 @@ class _AnalyseCalciumTraces(QWidget):
 
         return decay_time
 
-    def _extract_metadata(self, meta):
+    def _extract_metadata(self, meta: list[dict]) -> tuple[float]:
         """Extract information from metadata."""
         binning = int(meta[0].get('pco_camera-Binning'))
         magnification = float(meta[0].get('IntermediateMagnification-Magnification')[:-1])
@@ -994,147 +994,59 @@ class _AnalyseCalciumTraces(QWidget):
 
         return binning, magnification, pixel_size, objective, exposure, framerate
 
-    def output_csv(self):
+    def output_csv(self, col_per_treatment: int = 12) -> None:
         """Save csv files of the data."""
+        logger.info("Saving output files")
         exp_name = Path(self._output_path.value()).parent.name
-        file_path = Path(self._output_path.value()) / f"{exp_name}_FOVdata.xlsx"
-        # print(f' file path: {file_path}')
-        # print(f'        plate_map: {self._plate_map_data.keys()}')
-        # print(f'        plate_map values: {self._plate_map_data.values()}')
-        with xlsxwriter.Workbook(file_path, {'nan_inf_to_errors': True}) as wkbk:
-            wkst1 = wkbk.add_worksheet('Amplitude')
-            wkst2 = wkbk.add_worksheet('Cell Size (um)')
-            wkst3 = wkbk.add_worksheet('Frequency (events/s)')
-            wkst4 = wkbk.add_worksheet('IEI(s)')
-            # wkst5 = wkbk.add_worksheet('Max Slope')
-            wkst6 = wkbk.add_worksheet('Rise Time(s)')
-            # wkst7 = wkbk.add_worksheet('Decay Time')
 
-            wkst_list = [
-                wkst1, wkst2, wkst3, wkst4, wkst6,
-            ]
+        readout_list = ['Average Cell Size', 'Average Amplitude', 'Average Frequency',
+                        'Average Rise Time', 'Average IEI']
 
-            for wkst in wkst_list:
-                wkst.write(0, 0, "Experiment Name")
-                wkst.write(0, 1, f"{exp_name}")
+        # file_path_list = [(Path(self._output_path.value())/f"{exp_name}_{readout}.xlsx")\
+        #                for readout in readout_list]
+        compiled_data_list = self._compile_readout_data()
+        compiled_cond = self._compile_conditions()
+        compiled_geno = self._compile_genotypes()
+        for readout, readout_data in zip(readout_list, compiled_data_list):
+            file_path = Path(self._output_path.value())/f"{exp_name}_{readout}.xlsx"
+            with xlsxwriter.Workbook(file_path, {'nan_inf_to_errors': True}) as wkbk:
+                wkst = wkbk.add_worksheet(readout)
+                wkst.write(0, 0, readout)
 
-            data_by_metrics = self._compile_metric_data()
+                # write conditions
+                for i, cond in enumerate(compiled_cond):
+                    for repeat in range(col_per_treatment):
+                        wkst.write(0, i*col_per_treatment+repeat+1, cond)
 
-            for wkst, metrics in zip(wkst_list, data_by_metrics):
-                col = 0
-                for key, values in metrics.items():
-                    row = 3
-                    wkst.write(row, col, key)
-                    row += 1
-                    for value in values:
-                        wkst.write(row, col, value)
-                        row += 1
-                    col += 1
+                # write genotypes
+                for i, genotype in enumerate(compiled_geno):
+                    geno = genotype
+                    if genotype.lower() == "crispr":
+                        geno = "+/+"
+                    elif genotype.lower() == "patient":
+                        geno = "+/-"
+                    elif genotype.lower() == "null":
+                        geno = "-/-"
 
-            # mean_amplitude_dict = data_by_metrics["mean_amplitude"]
-            # mean_cell_size_dict = data_by_metrics["mean_cell_size"]
-            # mean_frequency_dict = data_by_metrics["mean_frequency"]
-            # mean_max_slope_dict = data_by_metrics["mean_max_slope"]
-            # mean_iei_dict = data_by_metrics["mean_iei"]
-            # mean_rise_time_dict = data_by_metrics["mean_rise_time"]
+                    wkst.write(i+1, 0, geno)
 
-    def _compile_conditions(self) -> dict[str, list[str]]:
-        cond_dict = {}
-        well_dict = {}
-        for key, value in self._plate_map_data.items():
-            condition = f"{value["condition_1"]}_{value["condition_2"]}"
-            if condition not in cond_dict:
-                cond_dict[condition] = []
-            cond_dict[condition].append(key)
+                for genotype, cond_data in readout_data.items():
+                    for cond, data_list in cond_data.items():
+                        for i in range(col_per_treatment):
+                            try:
+                                start = compiled_cond.index(cond)
+                                row = compiled_geno.index(genotype)+1
+                            except ValueError:
+                                start = 0
+                                row = 5
 
-            if key not in well_dict:
-                well_dict[key] = condition
+                            if i < len(data_list):
+                                entry = data_list[i]
+                            else:
+                                entry = 'N/A'
+                            wkst.write(row, start*col_per_treatment+i+1, entry)
 
-        # cond_dict = {"CRISPR_UT": ['B2', 'C2'],
-        #              "CRISPR_VC": ['B3', 'C3'],
-        #              ...
-        # }
-        # well_dict = {"B2": "CRISPR_UT",
-        #              "B3": "CRISPR_VC",
-        #              "B4": "CRISPR_0.2nM_Rap"
-
-        # }
-        return cond_dict, well_dict
-
-    def _compile_well_data(self):
-        _, well_dict = self._compile_conditions()
-
-        well_data = {}
-        for fov, fov_dict in self._analysis_data.items():
-            well = fov[:2]
-            if well in well_dict:
-                condition = well_dict[well]
-
-                if condition not in well_data:
-                    well_data[condition] = {}
-
-                if fov not in well_data[condition]:
-                    well_data[condition][fov] = {}
-
-                amplitude_list = [roiData.mean_amplitude for roiData in fov_dict.values()]
-                cell_size_list = [roiData.cell_size for roiData in fov_dict.values()]
-                frequency_list = [roiData.frequency for roiData in fov_dict.values()]
-                max_slope_list = [roiData.mean_max_slope for roiData in fov_dict.values()]
-                iei_list = [roiData.mean_iei for roiData in fov_dict.values()]
-                rise_time_list = [roiData.mean_rise_time for roiData in fov_dict.values()]
-
-                mean_amplitude_fov = np.mean(amplitude_list)
-                mean_cell_size_fov = np.mean(cell_size_list)
-                mean_frequency_fov = np.mean(frequency_list)
-                mean_max_slope_fov = np.mean(max_slope_list)
-                mean_iei_fov = np.mean(iei_list)
-                mean_rise_time_fov = np.mean(rise_time_list)
-
-                well_data[condition][fov]["mean_amplitude"] = mean_amplitude_fov
-                well_data[condition][fov]["mean_cell_size"] = mean_cell_size_fov
-                well_data[condition][fov]["mean_frequency"] = mean_frequency_fov
-                well_data[condition][fov]["mean_max_slope"] = mean_max_slope_fov
-                well_data[condition][fov]["mean_iei"] = mean_iei_fov
-                well_data[condition][fov]["mean_rise_time"] = mean_rise_time_fov
-
-        return well_data
-
-        # well_data = {
-        #     "CRISPR_UT": {
-        #         "B2_0000": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
-        #         "B2_0001": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
-        #         "C2_0000": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
-        #         "C2_0001": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
-        #         ...
-        #     },
-        #     "CRISPR_VC": {
-        #         "B3_0000": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
-        #         "B3_0001": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
-        #         ...
-        #     }
-        # }
-
-        # analysis_data = {
-        #     "B2_0000": {
-        #         "1": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
-        #         "2": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
-        #         ...
-        #     },
-        #     "B2_0001": {
-        #         "1": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
-        #         "2": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
-        #         ...
-        #     },
-        #     "B2_0002": {
-        #         "1": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
-        #         "2": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
-        #         ...
-        #     },
-        #     ...
-        # }
-
-    def _compile_metric_data(self):
-        _, well_dict = self._compile_conditions()
+    def _compile_readout_data(self) -> list[dict[str, dict[str, list[float]]]]:
         data_by_metrics = []
         mean_amplitude_dict = {}
         mean_cell_size_dict = {}
@@ -1143,10 +1055,13 @@ class _AnalyseCalciumTraces(QWidget):
         mean_rise_time_dict = {}
         mean_iei_dict = {}
 
+        plate_map_keys = list(self._plate_map_data.keys())
+
         for fov, fov_dict in self._analysis_data.items():
             well = fov[:2]
-            if well in well_dict:
-                condition = well_dict[well]
+            if well in plate_map_keys:
+                genotype = self._plate_map_data[well]["condition_1"]
+                treatment = self._plate_map_data[well]["condition_2"]
 
                 amplitude_list = [roiData.mean_amplitude for roiData in fov_dict.values()]
                 cell_size_list = [roiData.cell_size for roiData in fov_dict.values()]
@@ -1155,63 +1070,333 @@ class _AnalyseCalciumTraces(QWidget):
                 iei_list = [roiData.mean_iei for roiData in fov_dict.values()]
                 rise_time_list = [roiData.mean_rise_time for roiData in fov_dict.values()]
 
-                mean_amplitude_fov = np.mean(amplitude_list, dtype=np.float64)
-                mean_cell_size_fov = np.mean(cell_size_list, dtype=np.float64)
-                mean_frequency_fov = np.mean(frequency_list, dtype=np.float64)
+                mean_amplitude_fov = np.nanmean(amplitude_list, dtype=np.float64)
+                mean_cell_size_fov = np.nanmean(cell_size_list, dtype=np.float64)
+                mean_frequency_fov = np.nanmean(frequency_list, dtype=np.float64)
                 # mean_max_slope_fov = np.mean(max_slope_list)
                 mean_iei_fov = np.nanmean(iei_list, dtype=np.float64)
-                print(f'            iei_fov mean: {mean_iei_fov}')
-                mean_rise_time_fov = np.mean(rise_time_list, dtype=np.float64)
+                mean_rise_time_fov = np.nanmean(rise_time_list, dtype=np.float64)
 
-                if condition not in mean_amplitude_dict:
-                    mean_amplitude_dict[condition] = []
-                mean_amplitude_dict[condition].append(mean_amplitude_fov)
+                if genotype not in mean_amplitude_dict:
+                    mean_amplitude_dict[genotype] = {}
+                if treatment not in mean_amplitude_dict[genotype]:
+                    mean_amplitude_dict[genotype][treatment] = []
+                mean_amplitude_dict[genotype][treatment].append(mean_amplitude_fov)
 
-                if condition not in mean_cell_size_dict:
-                    mean_cell_size_dict[condition] = []
-                mean_cell_size_dict[condition].append(mean_cell_size_fov)
+                if genotype not in mean_cell_size_dict:
+                    mean_cell_size_dict[genotype] = {}
+                if treatment not in mean_cell_size_dict[genotype]:
+                    mean_cell_size_dict[genotype][treatment] = []
+                mean_cell_size_dict[genotype][treatment].append(mean_cell_size_fov)
 
-                if condition not in mean_frequency_dict:
-                    mean_frequency_dict[condition] = []
-                mean_frequency_dict[condition].append(mean_frequency_fov)
+                if genotype not in mean_frequency_dict:
+                    mean_frequency_dict[genotype] = {}
+                if treatment not in mean_frequency_dict[genotype]:
+                    mean_frequency_dict[genotype][treatment] = []
+                mean_frequency_dict[genotype][treatment].append(mean_frequency_fov)
 
-                if condition not in mean_iei_dict:
-                    mean_iei_dict[condition] = []
-                mean_iei_dict[condition].append(mean_iei_fov)
+                if genotype not in mean_iei_dict:
+                    mean_iei_dict[genotype] = {}
+                if treatment not in mean_iei_dict[genotype]:
+                    mean_iei_dict[genotype][treatment] = []
+                mean_iei_dict[genotype][treatment].append(mean_iei_fov)
 
-                # if condition not in mean_max_slope_dict:
-                #     mean_max_slope_dict[condition] = []
-                # mean_max_slope_dict[condition].append(mean_max_slope_fov)
+                if genotype not in mean_rise_time_dict:
+                    mean_rise_time_dict[genotype] = {}
+                if treatment not in mean_rise_time_dict[genotype]:
+                    mean_rise_time_dict[genotype][treatment] = []
+                mean_rise_time_dict[genotype][treatment].append(mean_rise_time_fov)
 
-                if condition not in mean_rise_time_dict:
-                    mean_rise_time_dict[condition] = []
-                mean_rise_time_dict[condition].append(mean_rise_time_fov)
-
-        data_by_metrics.append(mean_amplitude_dict)
         data_by_metrics.append(mean_cell_size_dict)
+        data_by_metrics.append(mean_amplitude_dict)
         data_by_metrics.append(mean_frequency_dict)
-        data_by_metrics.append(mean_iei_dict)
         data_by_metrics.append(mean_rise_time_dict)
-        # data_by_metrics["mean_amplitude"] = mean_amplitude_dict
-        # data_by_metrics["mean_cell_size"] = mean_cell_size_dict
-        # data_by_metrics["mean_frequency"] = mean_frequency_dict
-        # data_by_metrics["mean_max_slope"] = mean_max_slope_dict
-        # data_by_metrics["mean_iei"] = mean_iei_dict
-        # data_by_metrics["mean_rise_time"] = mean_rise_time_dict
+        data_by_metrics.append(mean_iei_dict)
 
         return data_by_metrics
 
-        # mean_amplitude={
-        #     "CRISPR_UT": [0.1, 0.3, 0.5, 0.4],
-        #     "CRISPR_VC": [0.3, 0.5, 0.5, 0.1],
-        #     ...
-        # },
-        # mean_cell_size={
-        #     "CRISPR_UT": [0.1, 0.3, 0.5, 0.4],
-        #     "CRISPR_VC": [0.3, 0.5, 0.5, 0.1],
-        #     ...
-        # }
-        # }
+    def _compile_conditions(self) -> list[str]:
+        return list({value["condition_2"] for value in self._plate_map_data.values()})
+
+    def _compile_genotypes(self) -> list[str]:
+        return list({value["condition_1"] for value in self._plate_map_data.values()})
+
+# well_dict=[
+# mean_amplitude={
+#     "CRISPR": {
+#         "UT":[0.1, 0.3, 0.5, 0.4],
+#         "VC": [0.1, 0.3, 0.5, 0.4],
+#         ...
+#     },
+#     "patient": {
+#         "UT":[0.1, 0.3, 0.5, 0.4],
+#         "VC": [0.1, 0.3, 0.5, 0.4],
+#         ...
+#     },
+#     "null": {
+#         "UT":[0.1, 0.3, 0.5, 0.4],
+#         "VC": [0.1, 0.3, 0.5, 0.4],
+#         ...
+#     }
+# },
+# mean_cell_size ={
+#     "CRISPR": {
+#         "UT":[0.1, 0.3, 0.5, 0.4],
+#         "VC": [0.1, 0.3, 0.5, 0.4],
+#         ...
+#     },
+#     "patient": {
+#         "UT":[0.1, 0.3, 0.5, 0.4],
+#         "VC": [0.1, 0.3, 0.5, 0.4],
+#         ...
+#     },
+#     "null": {
+#         "UT":[0.1, 0.3, 0.5, 0.4],
+#         "VC": [0.1, 0.3, 0.5, 0.4],
+#         ...
+# }
+# ]
+
+
+# well_dict = {
+#     "B2"
+#     "CRISPR":{
+#         "UT": ['B2', 'C2'],
+#         "VC": ['B3', 'C3'],
+#         ...
+#     },
+#     "patient":{
+#         "UT": ['D2', 'E2'],
+#         "VC": ['D3', 'E3'],
+#         ...
+#     },
+#     "Null":{
+#         "UT": ['F2', 'G2'],
+#         "VC": ['F3', 'G3'],
+#         ...
+#     }
+# }
+
+
+
+
+def output_csv(self):
+    """Save csv files of the data."""
+    exp_name = Path(self._output_path.value()).parent.name
+    file_path = Path(self._output_path.value()) / f"{exp_name}_FOVdata.xlsx"
+    # print(f' file path: {file_path}')
+    # print(f'        plate_map: {self._plate_map_data.keys()}')
+    # print(f'        plate_map values: {self._plate_map_data.values()}')
+    with xlsxwriter.Workbook(file_path, {'nan_inf_to_errors': True}) as wkbk:
+        wkst1 = wkbk.add_worksheet('Amplitude')
+        wkst2 = wkbk.add_worksheet('Cell Size (um)')
+        wkst3 = wkbk.add_worksheet('Frequency (events per s)')
+        wkst4 = wkbk.add_worksheet('IEI(s)')
+        # wkst5 = wkbk.add_worksheet('Max Slope')
+        wkst6 = wkbk.add_worksheet('Rise Time(s)')
+        # wkst7 = wkbk.add_worksheet('Decay Time')
+
+        wkst_list = [
+            wkst1, wkst2, wkst3, wkst4, wkst6,
+        ]
+
+        for wkst in wkst_list:
+            wkst.write(0, 0, "Experiment Name")
+            wkst.write(0, 1, f"{exp_name}")
+
+        data_by_metrics = self._compile_metric_data()
+
+        for wkst, metrics in zip(wkst_list, data_by_metrics):
+            col = 0
+            for key, values in metrics.items():
+                row = 3
+                wkst.write(row, col, key)
+                row += 1
+                for value in values:
+                    wkst.write(row, col, value)
+                    row += 1
+                col += 1
+
+        # mean_amplitude_dict = data_by_metrics["mean_amplitude"]
+        # mean_cell_size_dict = data_by_metrics["mean_cell_size"]
+        # mean_frequency_dict = data_by_metrics["mean_frequency"]
+        # mean_max_slope_dict = data_by_metrics["mean_max_slope"]
+        # mean_iei_dict = data_by_metrics["mean_iei"]
+        # mean_rise_time_dict = data_by_metrics["mean_rise_time"]
+
+def _compile_conditions(self) -> dict[str, list[str]]:
+    # cond_dict = {}
+    well_dict = {}
+    for key, value in self._plate_map_data.items():
+        condition = f"{value["condition_1"]}_{value["condition_2"]}"
+        # if condition not in cond_dict:
+        #     cond_dict[condition] = []
+        # cond_dict[condition].append(key)
+
+        if key not in well_dict:
+            well_dict[key] = condition
+
+    # cond_dict = {"CRISPR_UT": ['B2', 'C2'],
+    #              "CRISPR_VC": ['B3', 'C3'],
+    #              ...
+    # }
+    # well_dict = {"B2": "CRISPR_UT",
+    #              "B3": "CRISPR_VC",
+    #              "B4": "CRISPR_0.2nM_Rap"
+
+    # }
+    return well_dict
+
+def _compile_well_data(self):
+    _, well_dict = self._compile_conditions()
+
+    well_data = {}
+    for fov, fov_dict in self._analysis_data.items():
+        well = fov[:2]
+        if well in well_dict:
+            condition = well_dict[well]
+
+            if condition not in well_data:
+                well_data[condition] = {}
+
+            if fov not in well_data[condition]:
+                well_data[condition][fov] = {}
+
+            amplitude_list = [roiData.mean_amplitude for roiData in fov_dict.values()]
+            cell_size_list = [roiData.cell_size for roiData in fov_dict.values()]
+            frequency_list = [roiData.frequency for roiData in fov_dict.values()]
+            max_slope_list = [roiData.mean_max_slope for roiData in fov_dict.values()]
+            iei_list = [roiData.mean_iei for roiData in fov_dict.values()]
+            rise_time_list = [roiData.mean_rise_time for roiData in fov_dict.values()]
+
+            mean_amplitude_fov = np.mean(amplitude_list)
+            mean_cell_size_fov = np.mean(cell_size_list)
+            mean_frequency_fov = np.mean(frequency_list)
+            mean_max_slope_fov = np.mean(max_slope_list)
+            mean_iei_fov = np.mean(iei_list)
+            mean_rise_time_fov = np.mean(rise_time_list)
+
+            well_data[condition][fov]["mean_amplitude"] = mean_amplitude_fov
+            well_data[condition][fov]["mean_cell_size"] = mean_cell_size_fov
+            well_data[condition][fov]["mean_frequency"] = mean_frequency_fov
+            well_data[condition][fov]["mean_max_slope"] = mean_max_slope_fov
+            well_data[condition][fov]["mean_iei"] = mean_iei_fov
+            well_data[condition][fov]["mean_rise_time"] = mean_rise_time_fov
+
+    return well_data
+
+    # well_data = {
+    #     "CRISPR_UT": {
+    #         "B2_0000": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
+    #         "B2_0001": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
+    #         "C2_0000": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
+    #         "C2_0001": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
+    #         ...
+    #     },
+    #     "CRISPR_VC": {
+    #         "B3_0000": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
+    #         "B3_0001": {"mean_amplitude_FOV": 0.05, "mean_cell_size_FOV": 30},
+    #         ...
+    #     }
+    # }
+
+    # analysis_data = {
+    #     "B2_0000": {
+    #         "1": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
+    #         "2": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
+    #         ...
+    #     },
+    #     "B2_0001": {
+    #         "1": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
+    #         "2": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
+    #         ...
+    #     },
+    #     "B2_0002": {
+    #         "1": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
+    #         "2": ROIData(mean_cell_size, mean_amplitude, list[Peaks]),
+    #         ...
+    #     },
+    #     ...
+    # }
+
+def _compile_metric_data(self):
+    _, well_dict = self._compile_conditions()
+    data_by_metrics = []
+    mean_amplitude_dict = {}
+    mean_cell_size_dict = {}
+    mean_frequency_dict = {}
+    # mean_max_slope_dict = {}
+    mean_rise_time_dict = {}
+    mean_iei_dict = {}
+
+    for fov, fov_dict in self._analysis_data.items():
+        well = fov[:2]
+        if well in well_dict:
+            condition = well_dict[well]
+
+            amplitude_list = [roiData.mean_amplitude for roiData in fov_dict.values()]
+            cell_size_list = [roiData.cell_size for roiData in fov_dict.values()]
+            frequency_list = [roiData.frequency for roiData in fov_dict.values()]
+            # max_slope_list = [roiData.mean_max_slope for roiData in fov_dict.values()]
+            iei_list = [roiData.mean_iei for roiData in fov_dict.values()]
+            rise_time_list = [roiData.mean_rise_time for roiData in fov_dict.values()]
+
+            mean_amplitude_fov = np.nanmean(amplitude_list, dtype=np.float64)
+            mean_cell_size_fov = np.nanmean(cell_size_list, dtype=np.float64)
+            mean_frequency_fov = np.nanmean(frequency_list, dtype=np.float64)
+            # mean_max_slope_fov = np.mean(max_slope_list)
+            mean_iei_fov = np.nanmean(iei_list, dtype=np.float64)
+            mean_rise_time_fov = np.nanmean(rise_time_list, dtype=np.float64)
+
+            if condition not in mean_amplitude_dict:
+                mean_amplitude_dict[condition] = []
+            mean_amplitude_dict[condition].append(mean_amplitude_fov)
+
+            if condition not in mean_cell_size_dict:
+                mean_cell_size_dict[condition] = []
+            mean_cell_size_dict[condition].append(mean_cell_size_fov)
+
+            if condition not in mean_frequency_dict:
+                mean_frequency_dict[condition] = []
+            mean_frequency_dict[condition].append(mean_frequency_fov)
+
+            if condition not in mean_iei_dict:
+                mean_iei_dict[condition] = []
+            mean_iei_dict[condition].append(mean_iei_fov)
+
+            # if condition not in mean_max_slope_dict:
+            #     mean_max_slope_dict[condition] = []
+            # mean_max_slope_dict[condition].append(mean_max_slope_fov)
+
+            if condition not in mean_rise_time_dict:
+                mean_rise_time_dict[condition] = []
+            mean_rise_time_dict[condition].append(mean_rise_time_fov)
+
+    data_by_metrics.append(mean_amplitude_dict)
+    data_by_metrics.append(mean_cell_size_dict)
+    data_by_metrics.append(mean_frequency_dict)
+    data_by_metrics.append(mean_iei_dict)
+    data_by_metrics.append(mean_rise_time_dict)
+    # data_by_metrics["mean_amplitude"] = mean_amplitude_dict
+    # data_by_metrics["mean_cell_size"] = mean_cell_size_dict
+    # data_by_metrics["mean_frequency"] = mean_frequency_dict
+    # data_by_metrics["mean_max_slope"] = mean_max_slope_dict
+    # data_by_metrics["mean_iei"] = mean_iei_dict
+    # data_by_metrics["mean_rise_time"] = mean_rise_time_dict
+
+    return data_by_metrics
+
+    # mean_amplitude={
+    #     "CRISPR_UT": [0.1, 0.3, 0.5, 0.4],
+    #     "CRISPR_VC": [0.3, 0.5, 0.5, 0.1],
+    #     ...
+    # },
+    # mean_cell_size={
+    #     "CRISPR_UT": [0.1, 0.3, 0.5, 0.4],
+    #     "CRISPR_VC": [0.3, 0.5, 0.5, 0.1],
+    #     ...
+    # }
+    # }
 
 
 
