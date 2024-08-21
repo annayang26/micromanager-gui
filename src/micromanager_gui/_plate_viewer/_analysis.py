@@ -502,10 +502,13 @@ class _AnalyseCalciumTraces(QWidget):
         logger.info("Processing well %s", well)
 
         # temporary storage for trace to use for photobleaching correction
-        fitted_curves: list[tuple[list[float], list[float], float]] = []
+        # fitted_curves: list[tuple[list[float], list[float], float]] = []
 
         roi_trace: np.ndarray | list[float] | None
         roi_size_um: float | None
+
+        average_trace = cast(np.ndarray, data.mean(axis=(1, 2)))
+        exponential_decay = self._get_exponential_decay(average_trace)
 
         # extract roi traces
         logger.info(f"Extracting Traces from Well {well}.")
@@ -518,25 +521,22 @@ class _AnalyseCalciumTraces(QWidget):
             # calculate the mean trace for the roi
             masked_data = data[:, mask]
 
-            # compute the mean for each frame
+            # compute the mean trace for each frame
             roi_trace = cast(np.ndarray, masked_data.mean(axis=1))
+
+            # compute the area of the masksed cells
             roi_size_pixel = masked_data.shape[1]
             roi_size_um = self._cell_size_in_um(roi_size_pixel, binning, pixel_size,
                                                 objective, magnification)
 
-            # calculate the exponential decay for photobleaching correction
-            exponential_decay = self._get_exponential_decay(roi_trace)
-            if exponential_decay is not None:
-                fitted_curves.append(exponential_decay)
-
+            condition_1 = condition_2 = None
             if self._plate_map_data:
                 well_name = well.split("_")[0]
                 if well_name in self._plate_map_data:
                     condition_1 = self._plate_map_data[well_name].get("condition_1")
                     condition_2 = self._plate_map_data[well_name].get("condition_2")
-                else:
-                    condition_1 = condition_2 = None
 
+            # print("store data")
             # store the analysis data
             self._analysis_data[well][str(label_value)] = ROIData(
                 raw_trace=roi_trace.tolist(),
@@ -549,10 +549,8 @@ class _AnalyseCalciumTraces(QWidget):
 
         # average the fitted curves
         logger.info(f"Averaging the fitted curves well {well}.")
-        popts = np.array([popt for _, popt, _ in fitted_curves])
-        average_popts = np.mean(popts, axis=0)
-        time_points = np.arange(data.shape[0])
-        average_fitted_curve = single_exponential(time_points, *average_popts)
+        average_fitted_curve = exponential_decay[0]
+        popts = exponential_decay[1]
 
         # perform photobleaching correction
         logger.info(f"Performing Bleaching Correction for Well {well}.")
@@ -571,7 +569,7 @@ class _AnalyseCalciumTraces(QWidget):
 
             # calculate the bleach corrected trace
             bleach_corrected = (
-                np.array(roi_trace) - average_fitted_curve + average_popts[2]
+                np.array(roi_trace) - average_fitted_curve + popts[2]
             )
 
             # calculate the dF/F TODO: how to calculate F0?
@@ -592,11 +590,10 @@ class _AnalyseCalciumTraces(QWidget):
 
             #ROIData
             iei = self._get_iei(new_peaks, framerate)
+            mean_iei = mean_iei_stdev = None
             if iei:
                 mean_iei = np.mean(iei)
                 mean_iei_stdev = np.std(iei)
-            else:
-                mean_iei = mean_iei_stdev = None
             mean_amplitude = np.mean(amplitudes)
             mean_amplitude_stdev = np.std(amplitudes)
             frequency = len(peaks) / (recording_time) # events per second
@@ -606,11 +603,10 @@ class _AnalyseCalciumTraces(QWidget):
             mean_decay_time_stdev = np.std(decay_time)
             # mean_max_slope = np.mean(max_slopes)
             # mean_max_slope_stdev = np.std(max_slopes)
-
             # store the analysis data
             update = data.replace(
-                average_photobleaching_fitted_curve=average_fitted_curve.tolist(),
-                average_popts=average_popts.tolist(),
+                average_photobleaching_fitted_curve=average_fitted_curve,
+                average_popts=popts,
                 bleach_corrected_trace=bleach_corrected.tolist(),
                 peaks=[Peaks(peak=new_peaks[i],
                              amplitude=amplitudes[i],
