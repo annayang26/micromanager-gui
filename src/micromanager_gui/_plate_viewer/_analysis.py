@@ -598,7 +598,7 @@ class _AnalyseCalciumTraces(QWidget):
             # find the peaks in the bleach corrected trace
             peaks = self._find_peaks(d_dff, prominence=prominence) # for one ROI
             if len(peaks) < 2:
-                break
+                continue
 
             # Peaks
             amplitudes, start, end, new_peaks = self._get_amplitude(d_dff, peaks)
