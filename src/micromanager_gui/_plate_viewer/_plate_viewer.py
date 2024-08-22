@@ -434,6 +434,7 @@ class PlateViewer(QMainWindow):
                 "errored": self._on_loading_finished,
             },
         )
+        print(f'analysis data is none: {self._analysis_data is None}')
 
     def _on_loading_finished(self) -> None:
         """Called when the loading of the analysis data is finished."""

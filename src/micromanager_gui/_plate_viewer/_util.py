@@ -19,6 +19,7 @@ T = TypeVar("T", bound="BaseClass")
 
 RED = "#C33"
 GREEN = "#00FF00"
+GREY = "#808080"
 GENOTYPE_MAP = "genotype_plate_map.json"
 TREATMENT_MAP = "treatment_plate_map.json"
 
