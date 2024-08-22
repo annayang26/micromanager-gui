@@ -523,7 +523,8 @@ class _AnalyseCalciumTraces(QWidget):
         roi_size_um: float | None
 
         average_trace = cast(np.ndarray, data.mean(axis=(1, 2)))
-        exponential_decay = self._get_exponential_decay(average_trace)
+        path = Path(self._output_path.value()) / f"failed_fitted_curve_{well}.jpg"
+        exponential_decay = self._get_exponential_decay(average_trace, path=path)
 
         # extract roi traces
         logger.info(f"Extracting Traces from Well {well}.")
@@ -596,6 +597,8 @@ class _AnalyseCalciumTraces(QWidget):
             prominence = np.mean(d_dff) * 0.2
             # find the peaks in the bleach corrected trace
             peaks = self._find_peaks(d_dff, prominence=prominence) # for one ROI
+            if len(peaks) < 2:
+                break
 
             # Peaks
             amplitudes, start, end, new_peaks = self._get_amplitude(d_dff, peaks)
@@ -694,7 +697,8 @@ class _AnalyseCalciumTraces(QWidget):
         )
 
     def _get_exponential_decay(
-        self, trace: np.ndarray
+        self, trace: np.ndarray,
+        path: str = ""
     ) -> tuple[list[float], list[float], float] | None:
         """Fit an exponential decay to the trace.
 
@@ -715,6 +719,14 @@ class _AnalyseCalciumTraces(QWidget):
         except Exception as e:
             logger.error("Error fitting curve: %s", e)
             return None
+
+        if r_squared <= 0.98:
+            import matplotlib.pyplot as plt
+            plt.plot(fitted_curve, 'black', '--')
+            plt.plot(trace, 'blue')
+            plt.savefig(path)
+
+        return (fitted_curve.tolist(), popt.tolist(), float(r_squared))
 
         return (
             None
