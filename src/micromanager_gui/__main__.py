@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING, Sequence
 from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import QApplication
 
-from micromanager_gui import CellposeBatchSegmentation, MicroManagerGUI, PlateViewer
+from micromanager_gui import (
+    BatchAnalysis,
+    CellposeBatchSegmentation,
+    MicroManagerGUI,
+    PlateViewer,
+)
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -71,6 +76,15 @@ def batch_cellpose() -> None:
     app.setWindowIcon(QIcon(str(CELLPOSE_ICON)))
     cp = CellposeBatchSegmentation()
     cp.show()
+    sys.excepthook = _our_excepthook
+    app.exec()
+
+def batch_analysis() -> None:
+    """Open the Batch Anlysis."""
+    app = QApplication([])
+    # app.setWindowIcon(QIcon(str(CELLPOSE_ICON)))
+    ba = BatchAnalysis()
+    ba.show()
     sys.excepthook = _our_excepthook
     app.exec()
 

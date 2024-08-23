@@ -522,8 +522,12 @@ class _AnalyseCalciumTraces(QWidget):
         roi_trace: np.ndarray | list[float] | None
         roi_size_um: float | None
 
+
+        # if using the top fitted curve
+        # top_fitted_curves: tuple[list[float], list[float], float] = [None, None, 0]
         average_trace = cast(np.ndarray, data.mean(axis=(1, 2)))
         path = Path(self._output_path.value()) / f"failed_fitted_curve_{well}.jpg"
+        # if using average trace of the entire FOV
         exponential_decay = self._get_exponential_decay(average_trace, path=path)
 
         # extract roi traces
@@ -539,6 +543,14 @@ class _AnalyseCalciumTraces(QWidget):
 
             # compute the mean trace for each frame
             roi_trace = cast(np.ndarray, masked_data.mean(axis=1))
+
+            # if choosing the top fitted curve
+            # exponential_decay = self._get_exponential_decay(roi_trace, path)
+            # if exponential_decay is not None:
+            #     r_squared = exponential_decay[1]
+            #     top_r_sqaured = top_fitted_curves[1]
+            #     if r_squared > top_r_sqaured:
+                    # top_fitted_curves = exponential_decay
 
             # compute the area of the masksed cells
             roi_size_pixel = masked_data.shape[1]
@@ -567,6 +579,9 @@ class _AnalyseCalciumTraces(QWidget):
         logger.info(f"Averaging the fitted curves well {well}.")
         average_fitted_curve = exponential_decay[0]
         popts = exponential_decay[1]
+        # average_fitted_curve = top_fitted_curves[0]
+        # popts = top_fitted_curves[1]
+
 
         # perform photobleaching correction
         logger.info(f"Performing Bleaching Correction for Well {well}.")
@@ -716,17 +731,16 @@ class _AnalyseCalciumTraces(QWidget):
             ss_total = np.sum((trace - np.mean(trace)) ** 2)
             ss_res = np.sum(residuals**2)
             r_squared = 1 - (ss_res / ss_total)
+            if r_squared <= 0.98:
+                import matplotlib.pyplot as plt
+                plt.plot(fitted_curve, 'black', '--')
+                plt.plot(trace, 'blue')
+                plt.savefig(path)
         except Exception as e:
             logger.error("Error fitting curve: %s", e)
             return None
 
-        if r_squared <= 0.98:
-            import matplotlib.pyplot as plt
-            plt.plot(fitted_curve, 'black', '--')
-            plt.plot(trace, 'blue')
-            plt.savefig(path)
-
-        return (fitted_curve.tolist(), popt.tolist(), float(r_squared))
+        # return (fitted_curve.tolist(), popt.tolist(), float(r_squared))
 
         return (
             None
@@ -1066,7 +1080,7 @@ class _AnalyseCalciumTraces(QWidget):
                                     row = 5
 
                                 if i < len(data_list):
-                                    entry = data_list[i]
+                                    entry = float(data_list[i])
                                 else:
                                     entry = 'N/A'
                                 # print(f'    cond: {cond}, row: {row}, col:{start*col_per_treatment+i+1}, entry: {entry}')

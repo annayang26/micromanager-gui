@@ -302,6 +302,7 @@ class PlateMapWidget(QWidget):
     def setValue(self, value: list[PlateMapData] | list[str] | Path | str) -> None:
         """Set the value of the widget."""
         # unset all the wells and reset the items data
+        print(f"scene is not None: {self.scene is not None}")
         for item in self.scene.items():
             item = cast("_WellGraphicsItem", item)
             item.brush = UNSELECTED_COLOR
