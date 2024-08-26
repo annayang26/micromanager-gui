@@ -153,7 +153,7 @@ class BatchAnalysis(QWidget):
                 for f in folder.iterdir():
                     if f.name.endswith(EXT):
                         recording_file_path.append(str(f))
-                    if f.name.endswith("_labels"): # TODO: set it to _label when running actual analysis
+                    if f.name.endswith("labels"): # TODO: set it to _label when running actual analysis
                         labels_path.append(str(f))
 
                 # TODO: uncomment the following line when running actual analysis
@@ -335,7 +335,7 @@ def _analyze(
             roi_trace = cast(np.ndarray, masked_data.mean(axis=1))
 
             # if choosing the top fitted curve
-            exponential_decay = _get_exponential_decay(roi_trace, path)
+            exponential_decay = _get_exponential_decay(roi_trace)
             if exponential_decay is not None:
                 r_squared = exponential_decay[2]
                 top_r_sqaured = top_fitted_curves[2]
@@ -471,8 +471,7 @@ def _extract_metadata(meta: list[dict]) -> tuple[float]:
     return binning, magnification, pixel_size, objective, exposure, framerate
 
 def _get_exponential_decay(
-    trace: np.ndarray,
-    path: str = ""
+    trace: np.ndarray
 ) -> tuple[list[float], list[float], float] | None:
     """Fit an exponential decay to the trace.
 
@@ -490,11 +489,6 @@ def _get_exponential_decay(
         ss_total = np.sum((trace - np.mean(trace)) ** 2)
         ss_res = np.sum(residuals**2)
         r_squared = 1 - (ss_res / ss_total)
-        if r_squared <= 0.98:
-            import matplotlib.pyplot as plt
-            plt.plot(fitted_curve, 'black', '--')
-            plt.plot(trace, 'blue')
-            plt.savefig(path)
     except Exception as e:
         print("Error fitting curve: %s", e)
         return None
