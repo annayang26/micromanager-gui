@@ -419,7 +419,7 @@ def _analyze(
                 mean_iei_stdev = np.std(iei)
             mean_amplitude = np.mean(amplitudes)
             mean_amplitude_stdev = np.std(amplitudes)
-            frequency = len(peaks) / (recording_time) # events per second
+            frequency = len(new_peaks) / (recording_time) # events per second
             mean_rise_time = np.mean(rise_time)
             mean_rise_time_stdev = np.std(rise_time)
             mean_decay_time = np.mean(decay_time)
