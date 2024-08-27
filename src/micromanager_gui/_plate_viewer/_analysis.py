@@ -1073,6 +1073,7 @@ class _AnalyseCalciumTraces(QWidget):
                                     entry = float(data_list[i])
                                     wkst.write_number(row,
                                                       start*col_per_treatment+i+1,
+                                                      entry,
                                                       num_format)
                                 else:
                                     entry = 'N/A'
