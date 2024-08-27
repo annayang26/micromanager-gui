@@ -516,15 +516,14 @@ class _AnalyseCalciumTraces(QWidget):
 
         logger.info("Processing well %s", well)
 
-        # temporary storage for trace to use for photobleaching correction
-        # fitted_curves: list[tuple[list[float], list[float], float]] = []
-
         roi_trace: np.ndarray | list[float] | None
         roi_size_um: float | None
 
         average_trace = cast(np.ndarray, data.mean(axis=(1, 2)))
-        path = Path(self._output_path.value()) / f"failed_fitted_curve_{well}.jpg"
-        exponential_decay = self._get_exponential_decay(average_trace, path=path)
+        avg_exponential_decay = self._get_exponential_decay(average_trace)
+
+        # temporary storage for trace to use for photobleaching correction
+        top_exponential_decay: list[tuple[list[float], list[float], float]] = [None, None, 0]
 
         # extract roi traces
         logger.info(f"Extracting Traces from Well {well}.")
@@ -539,6 +538,14 @@ class _AnalyseCalciumTraces(QWidget):
 
             # compute the mean trace for each frame
             roi_trace = cast(np.ndarray, masked_data.mean(axis=1))
+
+            # if choosing the top fitted curve
+            roi_exponential_decay = self._get_exponential_decay(roi_trace)
+            if roi_exponential_decay is not None:
+                r_squared = roi_exponential_decay[2]
+                top_r_squared = top_exponential_decay[2]
+                if r_squared > top_r_squared:
+                    top_exponential_decay = roi_exponential_decay
 
             # compute the area of the masksed cells
             roi_size_pixel = masked_data.shape[1]
@@ -565,7 +572,12 @@ class _AnalyseCalciumTraces(QWidget):
 
         # average the fitted curves
         logger.info(f"Averaging the fitted curves well {well}.")
-        average_fitted_curve = exponential_decay[0]
+        avg_r_squared = avg_exponential_decay[2]
+        top_r_squared = top_exponential_decay[2]
+        exponential_decay = avg_exponential_decay if (
+            avg_r_squared > top_r_squared) else (top_exponential_decay)
+
+        fitted_curve = exponential_decay[0]
         popts = exponential_decay[1]
 
         # perform photobleaching correction
@@ -585,7 +597,7 @@ class _AnalyseCalciumTraces(QWidget):
 
             # calculate the bleach corrected trace
             bleach_corrected = (
-                np.array(roi_trace) - average_fitted_curve + popts[2]
+                np.array(roi_trace) - fitted_curve + popts[2]
             )
 
             # calculate the dF/F TODO: how to calculate F0?
@@ -623,7 +635,7 @@ class _AnalyseCalciumTraces(QWidget):
             # mean_max_slope_stdev = np.std(max_slopes)
             # store the analysis data
             update = data.replace(
-                average_photobleaching_fitted_curve=average_fitted_curve,
+                average_photobleaching_fitted_curve=fitted_curve,
                 average_popts=popts,
                 bleach_corrected_trace=bleach_corrected.tolist(),
                 peaks=[Peaks(peak=new_peaks[i],
@@ -698,7 +710,6 @@ class _AnalyseCalciumTraces(QWidget):
 
     def _get_exponential_decay(
         self, trace: np.ndarray,
-        path: str = ""
     ) -> tuple[list[float], list[float], float] | None:
         """Fit an exponential decay to the trace.
 
@@ -720,17 +731,9 @@ class _AnalyseCalciumTraces(QWidget):
             logger.error("Error fitting curve: %s", e)
             return None
 
-        if r_squared <= 0.98:
-            import matplotlib.pyplot as plt
-            plt.plot(fitted_curve, 'black', '--')
-            plt.plot(trace, 'blue')
-            plt.savefig(path)
-
-        return (fitted_curve.tolist(), popt.tolist(), float(r_squared))
-
         return (
             None
-            if r_squared <= 0.98
+            if r_squared <= 0.90
             else (fitted_curve.tolist(), popt.tolist(), float(r_squared))
         )
 
