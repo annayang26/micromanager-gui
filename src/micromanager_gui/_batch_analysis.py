@@ -316,13 +316,13 @@ def _analyze(
 
         roi_trace: np.ndarray | list[float] | None
         roi_size_um: float | None
+        small_rois: list[int] = []
 
-        # if using the top fitted curve
-        top_fitted_curves: tuple[list[float], list[float], float] = [None, None, 0]
-        # average_trace = cast(np.ndarray, data.mean(axis=(1, 2)))
-        path = output_path / f"failed_fitted_curve_{pos_name}.jpg"
-        # if using average trace of the entire FOV
-        # exponential_decay = self._get_exponential_decay(average_trace, path=path)
+        average_trace = cast(np.ndarray, stack.mean(axis=(1, 2)))
+        avg_exponential_decay = _get_exponential_decay(average_trace)
+
+        # temporary storage for trace to use for photobleaching correction
+        top_exponential_decay: list[tuple[list[float], list[float], float]] = [None, None, 0]
 
         # extract roi traces
         for label_value, mask in tqdm(
@@ -335,17 +335,21 @@ def _analyze(
             roi_trace = cast(np.ndarray, masked_data.mean(axis=1))
 
             # if choosing the top fitted curve
-            exponential_decay = _get_exponential_decay(roi_trace)
-            if exponential_decay is not None:
-                r_squared = exponential_decay[2]
-                top_r_sqaured = top_fitted_curves[2]
-                if r_squared > top_r_sqaured:
-                    top_fitted_curves = exponential_decay
+            roi_exponential_decay = _get_exponential_decay(roi_trace)
+            if roi_exponential_decay is not None:
+                r_squared = roi_exponential_decay[2]
+                top_r_squared = top_exponential_decay[2]
+                if r_squared > top_r_squared:
+                    top_exponential_decay = roi_exponential_decay
 
             # compute the area of the masksed cells
             roi_size_pixel = masked_data.shape[1]
             roi_size_um = _cell_size_in_um(roi_size_pixel, binning, pixel_size,
                                                 objective, magnification)
+            if roi_size_um < 10:
+                small_rois.append(label_value)
+                continue
+
             condition_1 = condition_2 = None
             if pm_data:
                 well_name = pos_name.split("_")[0]
@@ -355,15 +359,21 @@ def _analyze(
             # store the analysis data
             analysis_data[pos_name][str(label_value)] = ROIData(
                 raw_trace=roi_trace.tolist(),
-                use_for_bleach_correction=exponential_decay,
+                # use_for_bleach_correction=exponential_decay,
                 cell_size=roi_size_um,
                 condition_1=condition_1,
                 condition_2=condition_2,
             )
         # average_fitted_curve = exponential_decay[0]
         # popts = exponential_decay[1]
-        average_fitted_curve = top_fitted_curves[0]
-        popts = top_fitted_curves[1]
+        avg_r_squared = avg_exponential_decay[2]
+        top_r_squared = top_exponential_decay[2]
+        exponential_decay = avg_exponential_decay if (
+            avg_r_squared > top_r_squared) else (top_exponential_decay)
+
+        fitted_curve = exponential_decay[0]
+        popts = exponential_decay[1]
+        active: bool = True
 
         for label_value in tqdm(
             labels_range, desc=f"Performing Bleaching Correction for Well {pos_name}"
@@ -375,9 +385,12 @@ def _analyze(
             if roi_trace is None:
                 continue
 
+            if label_value in small_rois:
+                continue
+
             # calculate the bleach corrected trace
             bleach_corrected = (
-                np.array(roi_trace) - average_fitted_curve + popts[2]
+                np.array(roi_trace) - fitted_curve + popts[2]
             )
             # calculate the dF/F TODO: how to calculate F0?
             # F0 = np.min(bleach_corrected)
@@ -387,14 +400,16 @@ def _analyze(
             prominence = np.mean(d_dff) * 0.2
             # find the peaks in the bleach corrected trace
             peaks = _find_peaks(d_dff, prominence=prominence) # for one ROI
-            if len(peaks) < 2:
-                continue
 
             # Peaks
             amplitudes, start, end, new_peaks = _get_amplitude(d_dff, peaks)
             # max_slopes = self._get_max_slope(d_dff, new_peaks, start)
             rise_time = _get_rise_time(d_dff, amplitudes, new_peaks, start, framerate)
             decay_time = _get_decay_time(new_peaks, end, framerate)
+
+            if len(new_peaks) < 2:
+                active = False
+                continue
 
             #ROIData
             iei = _get_iei(new_peaks, framerate)
@@ -413,8 +428,9 @@ def _analyze(
             # mean_max_slope_stdev = np.std(max_slopes)
             # store the analysis data
             update = roi_data.replace(
-                average_photobleaching_fitted_curve=average_fitted_curve,
+                average_photobleaching_fitted_curve=fitted_curve,
                 average_popts=popts,
+                activity=active,
                 bleach_corrected_trace=bleach_corrected.tolist(),
                 peaks=[Peaks(peak=new_peaks[i],
                              amplitude=amplitudes[i],
@@ -695,7 +711,7 @@ def output_csv(output_path: str,
     exp_name = Path(output_path).parent.name
 
     readout_list = ['Average Cell Size', 'Average Amplitude', 'Average Frequency',
-                    'Average Rise Time', 'Average IEI']
+                    'Average Rise Time', 'Average IEI', 'Percentage Active']
 
     compiled_data_list = _compile_readout_data(analysis_data, pm_data)
     compiled_cond = _compile_conditions(pm_data)
@@ -705,6 +721,7 @@ def output_csv(output_path: str,
             file_path = Path(output_path)/f"{exp_name}_{readout}.xlsx"
             with xlsxwriter.Workbook(file_path, {'nan_inf_to_errors': True}) as wkbk:
                 wkst = wkbk.add_worksheet(readout)
+                num_format = wkbk.add_format({'num_format': '0.00E+00'})
                 wkst.write(0, 0, readout)
 
                 # write conditions
@@ -736,10 +753,13 @@ def output_csv(output_path: str,
 
                             if i < len(data_list):
                                 entry = float(data_list[i])
+                                wkst.write_number(row,
+                                                    start*col_per_treatment+i+1,
+                                                    entry,
+                                                    num_format)
                             else:
                                 entry = 'N/A'
-                            # print(f'    cond: {cond}, row: {row}, col:{start*col_per_treatment+i+1}, entry: {entry}')
-                            wkst.write(row, start*col_per_treatment+i+1, entry)
+                                wkst.write(row, start*col_per_treatment+i+1, entry)
 
     else:
         print("No data were found. Please check the plate map and data!")
@@ -752,6 +772,7 @@ def _compile_readout_data(analysis_data: dict, pm_data: dict) -> list[dict[str, 
     # mean_max_slope_dict = {}
     mean_rise_time_dict = {}
     mean_iei_dict = {}
+    activity_dict = {}
 
     data_to_compile = analysis_data
     plate_map_keys = list(pm_data.keys())
@@ -763,12 +784,18 @@ def _compile_readout_data(analysis_data: dict, pm_data: dict) -> list[dict[str, 
                 genotype = pm_data[well].get("condition_1")
                 treatment = pm_data[well].get("condition_2")
 
-                amplitude_list = [roiData.mean_amplitude for roiData in fov_dict.values()]
-                cell_size_list = [roiData.cell_size for roiData in fov_dict.values()]
-                frequency_list = [roiData.frequency for roiData in fov_dict.values()]
-                # max_slope_list = [roiData.mean_max_slope for roiData in fov_dict.values()]
-                iei_list = [roiData.mean_iei for roiData in fov_dict.values()]
-                rise_time_list = [roiData.mean_rise_time for roiData in fov_dict.values()]
+                amplitude_list = cell_size_list = frequency_list = iei_list = \
+                    rise_time_list = []
+                active_cells: int = 0
+
+                for roiData in fov_dict.values():
+                    if roiData.activity is True:
+                        cell_size_list.append(roiData.cell_size)
+                        amplitude_list.append(roiData.mean_amplitude)
+                        frequency_list.append(roiData.frequency)
+                        iei_list.append(roiData.mean_iei)
+                        rise_time_list.append(roiData.mean_rise_time)
+                        active_cells += 1
 
                 mean_amplitude_fov = np.nanmean(amplitude_list, dtype=np.float64)
                 mean_cell_size_fov = np.nanmean(cell_size_list, dtype=np.float64)
@@ -776,6 +803,7 @@ def _compile_readout_data(analysis_data: dict, pm_data: dict) -> list[dict[str, 
                 # mean_max_slope_fov = np.mean(max_slope_list)
                 mean_iei_fov = np.nanmean(iei_list, dtype=np.float64)
                 mean_rise_time_fov = np.nanmean(rise_time_list, dtype=np.float64)
+                pctg_active = active_cells / len(list(fov_dict.keys())) * 100
 
                 if genotype not in mean_amplitude_dict:
                     mean_amplitude_dict[genotype] = {}
@@ -807,11 +835,18 @@ def _compile_readout_data(analysis_data: dict, pm_data: dict) -> list[dict[str, 
                     mean_rise_time_dict[genotype][treatment] = []
                 mean_rise_time_dict[genotype][treatment].append(mean_rise_time_fov)
 
+                if genotype not in activity_dict:
+                    activity_dict[genotype] = {}
+                if treatment not in activity_dict[genotype]:
+                    activity_dict[genotype][treatment] = []
+                activity_dict[genotype][treatment].append(pctg_active)
+
         data_by_metrics.append(mean_cell_size_dict)
         data_by_metrics.append(mean_amplitude_dict)
         data_by_metrics.append(mean_frequency_dict)
         data_by_metrics.append(mean_rise_time_dict)
         data_by_metrics.append(mean_iei_dict)
+        data_by_metrics.append(activity_dict)
 
     return (None if len(data_by_metrics) == 0 else data_by_metrics)
 
