@@ -61,7 +61,7 @@ class ROIData(BaseClass):
     dff: list[float] | None = None
     d_dff: list[float] | None = None
     frequency: float | None = None
-    activity: bool | None = True
+    activity: bool | None = None
     mean_amplitude: float | None = None
     mean_amplitude_stdev: float | None = None
     mean_rise_time: float | None = None
