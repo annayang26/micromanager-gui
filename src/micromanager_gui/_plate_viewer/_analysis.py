@@ -1121,8 +1121,11 @@ class _AnalyseCalciumTraces(QWidget):
                 if well in plate_map_keys:
                     genotype = self._plate_map_data[well].get("condition_1")
                     treatment = self._plate_map_data[well].get("condition_2")
-                    amplitude_list = cell_size_list = frequency_list = iei_list = \
-                        rise_time_list = []
+                    amplitude_list = []
+                    cell_size_list = []
+                    frequency_list = []
+                    iei_list = []
+                    rise_time_list = []
                     active_cells: int = 0
 
                     for roiData in fov_dict.values():
