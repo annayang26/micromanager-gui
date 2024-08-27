@@ -1039,6 +1039,7 @@ class _AnalyseCalciumTraces(QWidget):
                 file_path = Path(self._output_path.value())/f"{exp_name}_{readout}.xlsx"
                 with xlsxwriter.Workbook(file_path, {'nan_inf_to_errors': True}) as wkbk:
                     wkst = wkbk.add_worksheet(readout)
+                    num_format = wkbk.add_format({'num_format': '0.00'})
                     wkst.write(0, 0, readout)
 
                     # write conditions
@@ -1069,11 +1070,14 @@ class _AnalyseCalciumTraces(QWidget):
                                     row = 5
 
                                 if i < len(data_list):
-                                    entry = data_list[i]
+                                    entry = float(data_list[i])
+                                    wkst.write_number(row,
+                                                      start*col_per_treatment+i+1,
+                                                      num_format)
                                 else:
                                     entry = 'N/A'
+                                    wkst.write(row, start*col_per_treatment+i+1, entry)
                                 # print(f'    cond: {cond}, row: {row}, col:{start*col_per_treatment+i+1}, entry: {entry}')
-                                wkst.write(row, start*col_per_treatment+i+1, entry)
 
         else:
             logger.info("No data were found. Please check the plate map and data!")
