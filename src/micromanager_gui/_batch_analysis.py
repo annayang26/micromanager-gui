@@ -153,7 +153,7 @@ class BatchAnalysis(QWidget):
                 for f in folder.iterdir():
                     if f.name.endswith(EXT):
                         recording_file_path.append(str(f))
-                    if f.name.endswith("labels"): # TODO: set it to _label when running actual analysis
+                    if f.name.endswith("_labels"): # TODO: set it to _label when running actual analysis
                         labels_path.append(str(f))
 
                 # TODO: uncomment the following line when running actual analysis
