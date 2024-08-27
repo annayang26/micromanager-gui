@@ -784,8 +784,11 @@ def _compile_readout_data(analysis_data: dict, pm_data: dict) -> list[dict[str, 
                 genotype = pm_data[well].get("condition_1")
                 treatment = pm_data[well].get("condition_2")
 
-                amplitude_list = cell_size_list = frequency_list = iei_list = \
-                    rise_time_list = []
+                amplitude_list = []
+                cell_size_list = []
+                frequency_list = []
+                iei_list = []
+                rise_time_list = []
                 active_cells: int = 0
 
                 for roiData in fov_dict.values():
