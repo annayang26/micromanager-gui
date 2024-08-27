@@ -235,6 +235,9 @@ class _AnalyseCalciumTraces(QWidget):
 
         self._reanalyze = False
 
+        if self._loaded_data():
+            self._analysis_data = self._plate_viewer._analysis_data
+
         self._worker = create_worker(
             self._extract_traces,
             positions=pos,
@@ -518,6 +521,7 @@ class _AnalyseCalciumTraces(QWidget):
 
         roi_trace: np.ndarray | list[float] | None
         roi_size_um: float | None
+        small_rois: list[int] = []
 
         average_trace = cast(np.ndarray, data.mean(axis=(1, 2)))
         avg_exponential_decay = self._get_exponential_decay(average_trace)
@@ -552,6 +556,10 @@ class _AnalyseCalciumTraces(QWidget):
             roi_size_um = self._cell_size_in_um(roi_size_pixel, binning, pixel_size,
                                                 objective, magnification)
 
+            if roi_size_um < 10:
+                small_rois.append(label_value)
+                continue
+
             condition_1 = condition_2 = None
             if self._plate_map_data:
                 well_name = well.split("_")[0]
@@ -563,7 +571,7 @@ class _AnalyseCalciumTraces(QWidget):
             # store the analysis data
             self._analysis_data[well][str(label_value)] = ROIData(
                 raw_trace=roi_trace.tolist(),
-                use_for_bleach_correction=exponential_decay,
+                # use_for_bleach_correction=exponential_decay,
                 cell_size=roi_size_um,
                 condition_1=condition_1,
                 condition_2=condition_2,
@@ -580,6 +588,8 @@ class _AnalyseCalciumTraces(QWidget):
         fitted_curve = exponential_decay[0]
         popts = exponential_decay[1]
 
+        active: bool = True
+
         # perform photobleaching correction
         logger.info(f"Performing Bleaching Correction for Well {well}.")
         for label_value in tqdm(
@@ -587,6 +597,9 @@ class _AnalyseCalciumTraces(QWidget):
             ):
             if self._check_for_abort_requested():
                 break
+
+            if label_value in small_rois:
+                continue
 
             data = self._analysis_data[well][str(label_value)] # for one ROI
 
@@ -610,6 +623,7 @@ class _AnalyseCalciumTraces(QWidget):
             # find the peaks in the bleach corrected trace
             peaks = self._find_peaks(d_dff, prominence=prominence) # for one ROI
             if len(peaks) < 2:
+                active = False
                 continue
 
             # Peaks
@@ -636,6 +650,7 @@ class _AnalyseCalciumTraces(QWidget):
             # store the analysis data
             update = data.replace(
                 average_photobleaching_fitted_curve=fitted_curve,
+                use_for_bleach_correction=exponential_decay,
                 average_popts=popts,
                 bleach_corrected_trace=bleach_corrected.tolist(),
                 peaks=[Peaks(peak=new_peaks[i],
@@ -649,6 +664,7 @@ class _AnalyseCalciumTraces(QWidget):
                 mean_amplitude=mean_amplitude,
                 mean_amplitude_stdev=mean_amplitude_stdev,
                 frequency=frequency,
+                activity=active,
                 mean_rise_time=mean_rise_time,
                 mean_rise_time_stdev=mean_rise_time_stdev,
                 mean_decay_time=mean_decay_time,
@@ -1029,7 +1045,7 @@ class _AnalyseCalciumTraces(QWidget):
         exp_name = Path(self._output_path.value()).parent.name
 
         readout_list = ['Average Cell Size', 'Average Amplitude', 'Average Frequency',
-                        'Average Rise Time', 'Average IEI']
+                        'Average Rise Time', 'Average IEI', "Percentage Active"]
 
         compiled_data_list = self._compile_readout_data()
         compiled_cond = self._compile_conditions()
@@ -1037,7 +1053,7 @@ class _AnalyseCalciumTraces(QWidget):
         if compiled_data_list:
             for readout, readout_data in zip(readout_list, compiled_data_list):
                 file_path = Path(self._output_path.value())/f"{exp_name}_{readout}.xlsx"
-                with xlsxwriter.Workbook(file_path, {'nan_inf_to_errors': True}) as wkbk:
+                with xlsxwriter.Workbook(file_path, {'nan_inf_to_errors':True}) as wkbk:
                     wkst = wkbk.add_worksheet(readout)
                     num_format = wkbk.add_format({'num_format': '0.00'})
                     wkst.write(0, 0, readout)
@@ -1091,6 +1107,7 @@ class _AnalyseCalciumTraces(QWidget):
         # mean_max_slope_dict = {}
         mean_rise_time_dict = {}
         mean_iei_dict = {}
+        activity_dict = {}
 
         data_to_compile = self.analysis_data
         if self._loaded_data():
@@ -1103,13 +1120,25 @@ class _AnalyseCalciumTraces(QWidget):
                 if well in plate_map_keys:
                     genotype = self._plate_map_data[well].get("condition_1")
                     treatment = self._plate_map_data[well].get("condition_2")
+                    amplitude_list = cell_size_list = frequency_list = iei_list = \
+                        rise_time_list = []
+                    active_cells: int = 0
 
-                    amplitude_list = [roiData.mean_amplitude for roiData in fov_dict.values()]
-                    cell_size_list = [roiData.cell_size for roiData in fov_dict.values()]
-                    frequency_list = [roiData.frequency for roiData in fov_dict.values()]
-                    # max_slope_list = [roiData.mean_max_slope for roiData in fov_dict.values()]
-                    iei_list = [roiData.mean_iei for roiData in fov_dict.values()]
-                    rise_time_list = [roiData.mean_rise_time for roiData in fov_dict.values()]
+                    for roiData in fov_dict.values():
+                        if roiData.activity:
+                            cell_size_list.append(roiData.cell_size)
+                            amplitude_list.append(roiData.mean_amplitude)
+                            frequency_list.append(roiData.frequency)
+                            iei_list.append(roiData.mean_iei)
+                            rise_time_list.append(roiData.mean_rise_time)
+                            active_cells += 1
+
+                    # amplitude_list = [roiData.mean_amplitude for roiData in fov_dict.values()]
+                    # cell_size_list = [roiData.cell_size for roiData in fov_dict.values()]
+                    # frequency_list = [roiData.frequency for roiData in fov_dict.values()]
+                    # # max_slope_list = [roiData.mean_max_slope for roiData in fov_dict.values()]
+                    # iei_list = [roiData.mean_iei for roiData in fov_dict.values()]
+                    # rise_time_list = [roiData.mean_rise_time for roiData in fov_dict.values()]
 
                     mean_amplitude_fov = np.nanmean(amplitude_list, dtype=np.float64)
                     mean_cell_size_fov = np.nanmean(cell_size_list, dtype=np.float64)
@@ -1117,6 +1146,7 @@ class _AnalyseCalciumTraces(QWidget):
                     # mean_max_slope_fov = np.mean(max_slope_list)
                     mean_iei_fov = np.nanmean(iei_list, dtype=np.float64)
                     mean_rise_time_fov = np.nanmean(rise_time_list, dtype=np.float64)
+                    pctg_active = active_cells / len(list(fov_dict.keys())) * 100
 
                     if genotype not in mean_amplitude_dict:
                         mean_amplitude_dict[genotype] = {}
@@ -1148,11 +1178,18 @@ class _AnalyseCalciumTraces(QWidget):
                         mean_rise_time_dict[genotype][treatment] = []
                     mean_rise_time_dict[genotype][treatment].append(mean_rise_time_fov)
 
+                    if genotype not in activity_dict:
+                        activity_dict[genotype] = {}
+                    if treatment not in activity_dict[genotype]:
+                        activity_dict[genotype][treatment] = []
+                    activity_dict[genotype][treatment].append(pctg_active)
+
             data_by_metrics.append(mean_cell_size_dict)
             data_by_metrics.append(mean_amplitude_dict)
             data_by_metrics.append(mean_frequency_dict)
             data_by_metrics.append(mean_rise_time_dict)
             data_by_metrics.append(mean_iei_dict)
+            data_by_metrics.append(activity_dict)
 
         return (None if len(data_by_metrics) == 0 else data_by_metrics)
 
@@ -1163,6 +1200,9 @@ class _AnalyseCalciumTraces(QWidget):
         return list({value["condition_1"] for value in self._plate_map_data.values()})
 
     def _loaded_data(self):
+        if not self._plate_viewer._analysis_data:
+            logger.error('No data to compile. Please analyze the data first!')
+            return False
         if self._plate_viewer._analysis_data and\
             not self._reanalyze and\
             self._plate_viewer._plate_map_genotype and\
@@ -1170,7 +1210,6 @@ class _AnalyseCalciumTraces(QWidget):
             self._handle_plate_map()
             return True
         else:
-            logger.error('No data to compile. Please analyze the data first!')
             return False
 
 # well_dict=[
