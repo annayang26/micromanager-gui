@@ -622,15 +622,16 @@ class _AnalyseCalciumTraces(QWidget):
             prominence = np.mean(d_dff) * 0.2
             # find the peaks in the bleach corrected trace
             peaks = self._find_peaks(d_dff, prominence=prominence) # for one ROI
-            if len(peaks) < 2:
-                active = False
-                continue
 
             # Peaks
             amplitudes, start, end, new_peaks = self._get_amplitude(d_dff, peaks)
             # max_slopes = self._get_max_slope(d_dff, new_peaks, start)
             rise_time = self._get_rise_time(d_dff, amplitudes, new_peaks, start, framerate)
             decay_time = self._get_decay_time(new_peaks, end, framerate)
+
+            if len(new_peaks) < 2:
+                active = False
+                continue
 
             #ROIData
             iei = self._get_iei(new_peaks, framerate)
