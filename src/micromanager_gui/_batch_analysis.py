@@ -58,6 +58,8 @@ class BatchAnalysis(QWidget):
         ) -> None:
             super().__init__(parent)
 
+            self.setWindowTitle("Batch Process")
+
             self._run_worker: FunctionWorker | None = None
             self._futures: list[concurrent.futures.Future] = []
             self._stop_event: Event = Manager().Event()
@@ -386,6 +388,9 @@ def _analyze(
         for label_value in tqdm(
             labels_range, desc=f"Performing Bleaching Correction for Well {pos_name}"
             ):
+            if label_value in small_rois:
+                continue
+
             roi_data = analysis_data[pos_name][str(label_value)] # for one ROI
 
             roi_trace = roi_data.raw_trace
@@ -393,9 +398,6 @@ def _analyze(
             if roi_trace is None:
                 continue
             active: bool = True
-
-            if label_value in small_rois:
-                continue
 
             # calculate the bleach corrected trace
             bleach_corrected = (

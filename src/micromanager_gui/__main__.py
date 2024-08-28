@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 WALLE_ICON = Path(__file__).parent / "icons" / "wall_e_icon.png"
 CELLPOSE_ICON = Path(__file__).parent / "icons" / "cellpose_icon.png"
+BATCH_PROCESS_ICON = Path(__file__).parent / "icons" / "batch_process.png"
 
 
 def main(args: Sequence[str] | None = None) -> None:
@@ -82,7 +83,7 @@ def batch_cellpose() -> None:
 def batch_analysis() -> None:
     """Open the Batch Anlysis."""
     app = QApplication([])
-    # app.setWindowIcon(QIcon(str(CELLPOSE_ICON)))
+    app.setWindowIcon(QIcon(str(BATCH_PROCESS_ICON)))
     ba = BatchAnalysis()
     ba.show()
     sys.excepthook = _our_excepthook
