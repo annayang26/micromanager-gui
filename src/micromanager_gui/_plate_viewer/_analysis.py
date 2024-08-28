@@ -588,7 +588,6 @@ class _AnalyseCalciumTraces(QWidget):
         fitted_curve = exponential_decay[0]
         popts = exponential_decay[1]
 
-        active: bool = True
 
         # perform photobleaching correction
         logger.info(f"Performing Bleaching Correction for Well {well}.")
@@ -604,6 +603,7 @@ class _AnalyseCalciumTraces(QWidget):
             data = self._analysis_data[well][str(label_value)] # for one ROI
 
             roi_trace = data.raw_trace
+            active: bool = True
 
             if roi_trace is None:
                 continue
