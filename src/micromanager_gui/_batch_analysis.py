@@ -730,29 +730,30 @@ def output_csv(output_path: str,
     if compiled_data_list:
         for readout, readout_data in zip(readout_list, compiled_data_list):
             file_path = Path(output_path)/f"{exp_name}_{readout}.xlsx"
-            with xlsxwriter.Workbook(file_path, {'nan_inf_to_errors': True}) as wkbk:
-                wkst = wkbk.add_worksheet(readout)
-                num_format = wkbk.add_format({'num_format': '0.00'})
-                wkst.write(0, 0, readout)
+            wkbk = xlsxwriter.Workbook(file_path, {'nan_inf_to_errors': True})
+            # with xlsxwriter.Workbook(file_path, {'nan_inf_to_errors': True}) as wkbk:
+            wkst = wkbk.add_worksheet(readout)
+            num_format = wkbk.add_format({'num_format': '0.00'})
+            wkst.write(0, 0, readout)
 
-                # write conditions
-                for i, condition in enumerate(compiled_cond):
-                    for repeat in range(col_per_treatment):
-                        wkst.write(0, i*col_per_treatment+repeat+1, condition)
+            # write conditions
+            for i, condition in enumerate(compiled_cond):
+                for repeat in range(col_per_treatment):
+                    wkst.write(0, i*col_per_treatment+repeat+1, condition)
 
-                # write genotypes
-                for i, genotype in enumerate(compiled_geno):
-                    geno = genotype
-                    if genotype.lower() == "crispr":
-                        geno = "+/+"
-                    elif genotype.lower() == "patient":
-                        geno = "+/-"
-                    elif genotype.lower() == "null":
-                        geno = "-/-"
+            # write genotypes
+            for i, genotype in enumerate(compiled_geno):
+                geno = genotype
+                if genotype.lower() == "crispr":
+                    geno = "+/+"
+                elif genotype.lower() == "patient":
+                    geno = "+/-"
+                elif genotype.lower() == "null":
+                    geno = "-/-"
 
-                    wkst.write(i+1, 0, geno)
+                wkst.write(i+1, 0, geno)
 
-                for genotype, cond_data in readout_data.items():
+            for genotype, cond_data in readout_data.items():
                     for cond, data_list in cond_data.items():
                         for i in range(col_per_treatment):
                             try:
@@ -771,7 +772,7 @@ def output_csv(output_path: str,
                             else:
                                 entry = 'N/A'
                                 wkst.write(row, start*col_per_treatment+i+1, entry)
-
+            wkbk.close()
     else:
         print("No data were found. Please check the plate map and data!")
 
