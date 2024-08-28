@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
-import logging
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from multiprocessing import Manager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import tifffile
@@ -156,7 +154,7 @@ class BatchAnalysis(QWidget):
                 for f in folder.iterdir():
                     if f.name.endswith(EXT):
                         recording_file_path.append(str(f))
-                    if f.name.endswith(LABELS): # TODO: set it to _label when running actual analysis
+                    if f.name.endswith(LABELS):
                         labels_path.append(str(f))
 
                 # TODO: uncomment the following line when running actual analysis
@@ -170,28 +168,28 @@ class BatchAnalysis(QWidget):
         cpu_count = os.cpu_count() or 1
         cpu_count = max(1, cpu_count - 2)  # leave a couple of cores for the system
 
-        try:
-            with concurrent.futures.ProcessPoolExecutor(
-                max_workers=cpu_count
-                ) as executor:
-                self._futures = [
-                    executor.submit(_analyze_data, f, label, self._plate_map_data,
-                                    self._genotype_pm, self._treatment_pm,
-                                    self._stop_event) for
-                    f, label in zip(recording_file_path, labels_path)
-                ]
+        for f, label in zip(recording_file_path, labels_path):
+            try:
+                with concurrent.futures.ProcessPoolExecutor(
+                    max_workers=cpu_count
+                    ) as executor:
+                    self._futures = [
+                        executor.submit(_analyze_data, f, label, self._plate_map_data,
+                                        self._genotype_pm, self._treatment_pm,
+                                        self._stop_event)
+                    ]
 
-                for future in tqdm(
-                    concurrent.futures.as_completed(self._futures),
-                    total=len(self._futures),
-                    desc="Processing files",
-                ):
-                    try:
-                        future.result()
-                    except Exception as e:
-                        print(f"An error occurred inside: {e}")
-        except Exception as e:
-            print("An error occurred: %s", e)
+                    for future in tqdm(
+                        concurrent.futures.as_completed(self._futures),
+                        total=len(recording_file_path),
+                        desc="Processing files",
+                    ):
+                        try:
+                            future.result()
+                        except Exception as e:
+                            print(f"An error occurred inside: {e}")
+            except Exception as e:
+                print("An error occurred: %s", e)
 
     def _load_plate_map(self) -> None:
         """Load plate map from the given path."""
@@ -272,14 +270,14 @@ def _analyze_data(data_path: str, label_path: str,
         labels_path=label_path,
         pm_data=pm_data,
         output_path=path,
-        positions=positions, stop_event=stop_event
+        positions=positions,
+        stop_event=stop_event
     )
 
     output_csv(output_path=path,
                analysis_data=analysis_data,
                pm_data=pm_data,
                )
-
 
 def _analyze(
     data: OMEZarrReader | TensorstoreZarrReader,
@@ -333,7 +331,9 @@ def _analyze(
         avg_exponential_decay = _get_exponential_decay(average_trace)
 
         # temporary storage for trace to use for photobleaching correction
-        top_exponential_decay: list[tuple[list[float], list[float], float]] = [None, None, 0]
+        top_exponential_decay: list[
+            tuple[list[float], list[float], float]
+            ]= [None, None, 0]
 
         # extract roi traces
         for label_value, mask in tqdm(
@@ -631,7 +631,8 @@ def _get_amplitude(dff: list[float], peaks: list[int], deriv_threshold=0.01,
                     total_count += 1
                     if end_index in peaks:
                         negative_count = 0
-                        while end_index >= 0 and dff_deriv[end_index] > 0 and negative_count < neg_reset_num:
+                        while end_index >= 0 and dff_deriv[end_index] > 0\
+                            and negative_count < neg_reset_num:
                             end_index -= 1
                             if dff_deriv[end_index] > 0:
                                 negative_count += 1
@@ -775,7 +776,9 @@ def output_csv(output_path: str,
     else:
         print("No data were found. Please check the plate map and data!")
 
-def _compile_readout_data(analysis_data: dict, pm_data: dict) -> list[dict[str, dict[str, list[float]]]]:
+def _compile_readout_data(
+        analysis_data: dict, pm_data: dict
+        ) -> list[dict[str, dict[str, list[float]]]]:
     data_by_metrics = []
     mean_amplitude_dict = {}
     mean_cell_size_dict = {}
