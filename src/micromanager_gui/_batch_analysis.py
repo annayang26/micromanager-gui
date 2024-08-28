@@ -37,7 +37,7 @@ from tqdm import tqdm
 from micromanager_gui._plate_viewer._init_dialog import _BrowseWidget
 
 from ._plate_viewer._plate_map import PlateMapData
-from ._plate_viewer._util import GREEN, RED, Peaks, ROIData
+from ._plate_viewer._util import GENOTYPE_MAP, GREEN, RED, TREATMENT_MAP, Peaks, ROIData
 from ._readers._ome_zarr_reader import OMEZarrReader
 from ._readers._tensorstore_zarr_reader import TensorstoreZarrReader
 
@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 EXT = (WRITERS[OME_ZARR][0], WRITERS[ZARR_TESNSORSTORE][0])
 FIXED = QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
 DATA_KEY = 0
+LABELS = "_labels"
 
 class BatchAnalysis(QWidget):
     def __init__(
@@ -153,7 +154,7 @@ class BatchAnalysis(QWidget):
                 for f in folder.iterdir():
                     if f.name.endswith(EXT):
                         recording_file_path.append(str(f))
-                    if f.name.endswith("_labels"): # TODO: set it to _label when running actual analysis
+                    if f.name.endswith(LABELS): # TODO: set it to _label when running actual analysis
                         labels_path.append(str(f))
 
                 # TODO: uncomment the following line when running actual analysis
@@ -164,10 +165,16 @@ class BatchAnalysis(QWidget):
                     self.cancel()
                     break
 
+        cpu_count = os.cpu_count() or 1
+        cpu_count = max(1, cpu_count - 2)  # leave a couple of cores for the system
+
         try:
-            with concurrent.futures.ProcessPoolExecutor() as executor:
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=cpu_count
+                ) as executor:
                 self._futures = [
                     executor.submit(_analyze_data, f, label, self._plate_map_data,
+                                    self._genotype_pm, self._treatment_pm,
                                     self._stop_event) for
                     f, label in zip(recording_file_path, labels_path)
                 ]
@@ -180,7 +187,7 @@ class BatchAnalysis(QWidget):
                     try:
                         future.result()
                     except Exception as e:
-                        print(f"An error occurred: {e}")
+                        print(f"An error occurred inside: {e}")
         except Exception as e:
             print("An error occurred: %s", e)
 
@@ -190,10 +197,6 @@ class BatchAnalysis(QWidget):
             self._genotype_pm = self._setValue(self._genotype_pm_path.value())
         if self._treatment_pm_path is not None:
             self._treatment_pm = self._setValue(self._treatment_pm_path.value())
-        # geno_path = r'/Volumes/Expansion/test/NC240503_240627_Chronic/genotype_plate_map.json'
-        # cond_path = r'/Volumes/Expansion/test/NC240503_240627_Chronic/treatment_plate_map.json'
-        # self._genotype_pm = self._setValue(geno_path)
-        # self._treatment_pm = self._setValue(cond_path)
 
     def _handle_plate_map(self) -> None:
         """Handle plate map data."""
@@ -225,7 +228,8 @@ class BatchAnalysis(QWidget):
 
 def _analyze_data(data_path: str, label_path: str,
                    pm_data: dict[str, dict[str, str]],
-                stop_event: Event) -> None:
+                   geno_pm: list[PlateMapData], cond_pm: list[PlateMapData],
+                   stop_event: Event) -> None:
     if stop_event.is_set():
         print(f"Analysis process stopped for {data_path}")
         return
@@ -257,6 +261,10 @@ def _analyze_data(data_path: str, label_path: str,
     if not path.exists():
         path.mkdir()
 
+    _save_plate_map(geno_pm=geno_pm,
+                    cond_pm=cond_pm,
+                    path=path)
+
     analysis_data = _analyze(
         data=data,
         labels_path=label_path,
@@ -270,6 +278,7 @@ def _analyze_data(data_path: str, label_path: str,
                pm_data=pm_data,
                )
 
+
 def _analyze(
     data: OMEZarrReader | TensorstoreZarrReader,
     labels_path: str,
@@ -281,7 +290,7 @@ def _analyze(
     analysis_data: dict[str, dict[str, ROIData]] = {}
     for p in tqdm(positions, desc="Processing positions"):
         if stop_event.is_set():
-            print(f"Segmentation stopped at position {p}")
+            print(f"Analysis stopped at position {p}")
             break
 
         # get the data
@@ -303,7 +312,7 @@ def _analyze(
         labels = tifffile.imread(_get_labels_file(labels_path, label_name))
         if labels is None:
             print("No labels found for %s!", label_name)
-            return
+            continue
 
         # get the range of labels
         labels_range = range(1, labels.max())
@@ -859,3 +868,11 @@ def _compile_conditions(pm_data: dict) -> list[str]:
 def _compile_genotypes(pm_data: dict) -> list[str]:
     return list({value["condition_1"] for value in pm_data.values()})
 
+def _save_plate_map(geno_pm: list[PlateMapData], cond_pm: list[PlateMapData],
+                    path: str) -> None:
+    geno_path = Path(path) / GENOTYPE_MAP
+    cond_path = Path(path) / TREATMENT_MAP
+    with geno_path.open("w") as f1:
+        json.dump(geno_pm, f1, indent=2)
+    with cond_path.open("w") as f2:
+        json.dump(cond_pm, f2, indent=2)
