@@ -519,7 +519,6 @@ def _get_exponential_decay(
     except Exception as e:
         print("Error fitting curve: %s", e)
         return None
-    # return (fitted_curve.tolist(), popt.tolist(), float(r_squared))
 
     return (
         None
@@ -733,7 +732,7 @@ def output_csv(output_path: str,
             file_path = Path(output_path)/f"{exp_name}_{readout}.xlsx"
             with xlsxwriter.Workbook(file_path, {'nan_inf_to_errors': True}) as wkbk:
                 wkst = wkbk.add_worksheet(readout)
-                num_format = wkbk.add_format({'num_format': '0.00E+00'})
+                num_format = wkbk.add_format({'num_format': '0.00'})
                 wkst.write(0, 0, readout)
 
                 # write conditions
