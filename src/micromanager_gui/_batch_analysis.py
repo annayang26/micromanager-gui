@@ -373,7 +373,6 @@ def _analyze(
 
         fitted_curve = exponential_decay[0]
         popts = exponential_decay[1]
-        active: bool = True
 
         for label_value in tqdm(
             labels_range, desc=f"Performing Bleaching Correction for Well {pos_name}"
@@ -384,6 +383,7 @@ def _analyze(
 
             if roi_trace is None:
                 continue
+            active: bool = True
 
             if label_value in small_rois:
                 continue
