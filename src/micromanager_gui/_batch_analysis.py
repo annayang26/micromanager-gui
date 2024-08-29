@@ -295,8 +295,10 @@ def _analyze(
 
         # get the data
         stack, meta = data.isel(p=p, metadata=True)
-        if stack is None:
-            return
+        if stack is None or meta is None:
+            print("No labels found for %s!", p)
+            continue
+
         # get position name from metadata
         pos_name = meta[0].get("Event", {}).get("pos_name", f"pos_{str(p).zfill(4)}")
 
