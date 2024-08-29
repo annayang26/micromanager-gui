@@ -796,8 +796,7 @@ def _compile_readout_data(
     plate_map_keys = list(pm_data.keys())
 
     if len(plate_map_keys) > 0 and (
-        len(list(data_to_compile.keys()) == len(plate_map_keys))
-    ):
+        len(list(data_to_compile.keys())) == len(plate_map_keys)):
         for fov, fov_dict in data_to_compile.items():
             well = fov.split('_')[0]
             if well in plate_map_keys:
