@@ -168,15 +168,15 @@ class BatchAnalysis(QWidget):
         cpu_count = os.cpu_count() or 1
         cpu_count = max(1, cpu_count - 2)  # leave a couple of cores for the system
 
-        for f, label in zip(recording_file_path, labels_path):
-            try:
-                with concurrent.futures.ProcessPoolExecutor(
-                    max_workers=cpu_count
-                    ) as executor:
+        try:
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=cpu_count
+                ) as executor:
+                for f, label in zip(recording_file_path, labels_path):
                     self._futures = [
-                        executor.submit(_analyze_data, f, label, self._plate_map_data,
-                                        self._genotype_pm, self._treatment_pm,
-                                        self._stop_event)
+                        executor.submit(_analyze_data, f, label,
+                                            self._plate_map_data, self._genotype_pm,
+                                            self._treatment_pm, self._stop_event)
                     ]
 
                     for future in tqdm(
@@ -188,8 +188,8 @@ class BatchAnalysis(QWidget):
                             future.result()
                         except Exception as e:
                             print(f"An error occurred inside: {e}")
-            except Exception as e:
-                print("An error occurred: %s", e)
+        except Exception as e:
+            print("An error occurred: %s", e)
 
     def _load_plate_map(self) -> None:
         """Load plate map from the given path."""
@@ -295,6 +295,8 @@ def _analyze(
 
         # get the data
         stack, meta = data.isel(p=p, metadata=True)
+        if stack is None:
+            return
         # get position name from metadata
         pos_name = meta[0].get("Event", {}).get("pos_name", f"pos_{str(p).zfill(4)}")
 
@@ -791,7 +793,9 @@ def _compile_readout_data(
     data_to_compile = analysis_data
     plate_map_keys = list(pm_data.keys())
 
-    if len(plate_map_keys) > 0:
+    if len(plate_map_keys) > 0 and (
+        len(list(data_to_compile.keys()) == len(plate_map_keys))
+    ):
         for fov, fov_dict in data_to_compile.items():
             well = fov.split('_')[0]
             if well in plate_map_keys:
@@ -864,8 +868,9 @@ def _compile_readout_data(
         data_by_metrics.append(mean_rise_time_dict)
         data_by_metrics.append(mean_iei_dict)
         data_by_metrics.append(activity_dict)
-
-    return (None if len(data_by_metrics) == 0 else data_by_metrics)
+    else:
+        print("Data length doesn't match platemap. Will not output CSV files!")
+    return (None if len(data_by_metrics) < 1 else data_by_metrics)
 
 def _compile_conditions(pm_data: dict) -> list[str]:
     return list({value["condition_2"] for value in pm_data.values()})
