@@ -527,7 +527,7 @@ class _AnalyseCalciumTraces(QWidget):
         avg_exponential_decay = self._get_exponential_decay(average_trace)
 
         # temporary storage for trace to use for photobleaching correction
-        top_exponential_decay: list[tuple[list[float], list[float], float]] = [None, None, 0]
+        top_exponential_decay = (None, None, 0)
 
         # extract roi traces
         logger.info(f"Extracting Traces from Well {well}.")
@@ -544,12 +544,11 @@ class _AnalyseCalciumTraces(QWidget):
             roi_trace = cast(np.ndarray, masked_data.mean(axis=1))
 
             # if choosing the top fitted curve
-            roi_exponential_decay = self._get_exponential_decay(roi_trace)
-            if roi_exponential_decay is not None:
-                r_squared = roi_exponential_decay[2]
-                top_r_squared = top_exponential_decay[2]
-                if r_squared > top_r_squared:
-                    top_exponential_decay = roi_exponential_decay
+            roi_exponential_decay = self._get_exponential_decay(roi_trace, 0.95)
+            if roi_exponential_decay and roi_exponential_decay[0] is not None:
+                top_exponential_decay = max(roi_exponential_decay,
+                                            top_exponential_decay,
+                                            key=lambda x: x[2])
 
             # compute the area of the masksed cells
             roi_size_pixel = masked_data.shape[1]
@@ -580,14 +579,20 @@ class _AnalyseCalciumTraces(QWidget):
 
         # average the fitted curves
         logger.info(f"Averaging the fitted curves well {well}.")
-        avg_r_squared = avg_exponential_decay[2]
-        top_r_squared = top_exponential_decay[2]
+        avg_r_squared = avg_exponential_decay[2] if (avg_exponential_decay and
+            avg_exponential_decay[0] is not None) else 0
+        top_r_squared = top_exponential_decay[2] if (top_exponential_decay and
+            top_exponential_decay[0] is not None) else 0
         exponential_decay = avg_exponential_decay if (
-            avg_r_squared > top_r_squared) else (top_exponential_decay)
+            abs(avg_r_squared-top_r_squared)<0.01) else (top_exponential_decay)
+
+        i = 1
+        while exponential_decay is None and exponential_decay[0] is None:
+            exponential_decay = self._get_exponential_decay(average_trace, 0.98-i*0.01)
+            i += 1
 
         fitted_curve = exponential_decay[0]
         popts = exponential_decay[1]
-
 
         # perform photobleaching correction
         logger.info(f"Performing Bleaching Correction for Well {well}.")
@@ -626,7 +631,11 @@ class _AnalyseCalciumTraces(QWidget):
             # Peaks
             amplitudes, start, end, new_peaks = self._get_amplitude(d_dff, peaks)
             # max_slopes = self._get_max_slope(d_dff, new_peaks, start)
-            rise_time = self._get_rise_time(d_dff, amplitudes, new_peaks, start, framerate)
+            rise_time = self._get_rise_time(d_dff,
+                                            amplitudes,
+                                            new_peaks,
+                                            start,
+                                            framerate)
             decay_time = self._get_decay_time(new_peaks, end, framerate)
 
             if len(new_peaks) < 2:
@@ -726,8 +735,8 @@ class _AnalyseCalciumTraces(QWidget):
         )
 
     def _get_exponential_decay(
-        self, trace: np.ndarray,
-    ) -> tuple[list[float], list[float], float] | None:
+        self, trace: np.ndarray, cut_off:float = 0.98
+    ) -> tuple[list[float], list[float], float]:
         """Fit an exponential decay to the trace.
 
         Returns None if the R squared value is less than 0.9.
@@ -749,8 +758,8 @@ class _AnalyseCalciumTraces(QWidget):
             return None
 
         return (
-            None
-            if r_squared <= 0.90
+            (None, None, None)
+            if r_squared <= cut_off
             else (fitted_curve.tolist(), popt.tolist(), float(r_squared))
         )
 
@@ -814,7 +823,9 @@ class _AnalyseCalciumTraces(QWidget):
                             under_thresh_count = 0
 
                         # stop searching for starting index
-                        if under_thresh_count >= reset_num or start_index == 0 or total_count == total_dist:
+                        if (under_thresh_count >= reset_num or
+                            start_index == 0 or
+                            total_count == total_dist):
                             searching = False
 
                 # Search for ending index for current spike
@@ -849,7 +860,8 @@ class _AnalyseCalciumTraces(QWidget):
                             under_thresh_count = 0
 
                         # NOTE: changed the operator from == to >=
-                        if under_thresh_count >= reset_num or end_index == (len(dff_deriv) - 1) or \
+                        if under_thresh_count >= reset_num or end_index == (
+                            len(dff_deriv) - 1) or \
                                 total_count == total_dist:
                             searching = False
 
@@ -862,7 +874,8 @@ class _AnalyseCalciumTraces(QWidget):
                 # print(f"        start to spk: {start_to_spk}")
 
 
-                f_start_index = int(peaks[i] -(len(start_to_spk) - (np.argmin(start_to_spk) + 1)))
+                f_start_index = int(peaks[i] -(len(start_to_spk) - (
+                    np.argmin(start_to_spk) + 1)))
                 f_end_index = int(peaks[i] + np.argmin(spk_to_end))
                 amplitude = dff[peaks[i]]-dff[f_start_index]
                 # print(f"    start_index: {f_start_index} of {dff[f_start_index]}")
@@ -875,9 +888,6 @@ class _AnalyseCalciumTraces(QWidget):
                     amplitudes.append(amplitude)
                 else:
                     remove_peaks.append(peaks[i])
-                    # print(f"            REMOVING {peaks[i]} because the amplitude is {amplitude}")
-
-                # print(f"        amplitude: {amplitudes[-1]} from {start_indices[-1]} to {end_indices[-1]}")
 
         new_peaks = [peak for peak in peaks if (peak not in remove_peaks)]
 
@@ -934,7 +944,9 @@ class _AnalyseCalciumTraces(QWidget):
                         total_count += 1
                         if end_index in peaks:
                             negative_count = 0
-                            while end_index >= 0 and dff_deriv[end_index] > 0 and negative_count < neg_reset_num:
+                            while (end_index >= 0
+                                   and dff_deriv[end_index] > 0
+                                   and negative_count < neg_reset_num):
                                 end_index -= 1
                                 if dff_deriv[end_index] > 0:
                                     negative_count += 1
@@ -1032,7 +1044,8 @@ class _AnalyseCalciumTraces(QWidget):
     def _extract_metadata(self, meta: list[dict]) -> tuple[float]:
         """Extract information from metadata."""
         binning = int(meta[0].get('pco_camera-Binning'))
-        magnification = float(meta[0].get('IntermediateMagnification-Magnification')[:-1])
+        magnification = float(meta[0].get(
+            'IntermediateMagnification-Magnification')[:-1])
         pixel_size = float(meta[0].get('PixelSizeUm'))
         objective = int(meta[0].get('Nosepiece-Label').split(' ')[-1][:-1])
         exposure = float(meta[0].get('Event').get('exposure'))
@@ -1095,7 +1108,6 @@ class _AnalyseCalciumTraces(QWidget):
                                 else:
                                     entry = 'N/A'
                                     wkst.write(row, start*col_per_treatment+i+1, entry)
-                                # print(f'    cond: {cond}, row: {row}, col:{start*col_per_treatment+i+1}, entry: {entry}')
 
         else:
             logger.info("No data were found. Please check the plate map and data!")
@@ -1136,13 +1148,6 @@ class _AnalyseCalciumTraces(QWidget):
                             iei_list.append(roiData.mean_iei)
                             rise_time_list.append(roiData.mean_rise_time)
                             active_cells += 1
-
-                    # amplitude_list = [roiData.mean_amplitude for roiData in fov_dict.values()]
-                    # cell_size_list = [roiData.cell_size for roiData in fov_dict.values()]
-                    # frequency_list = [roiData.frequency for roiData in fov_dict.values()]
-                    # # max_slope_list = [roiData.mean_max_slope for roiData in fov_dict.values()]
-                    # iei_list = [roiData.mean_iei for roiData in fov_dict.values()]
-                    # rise_time_list = [roiData.mean_rise_time for roiData in fov_dict.values()]
 
                     mean_amplitude_fov = np.nanmean(amplitude_list, dtype=np.float64)
                     mean_cell_size_fov = np.nanmean(cell_size_list, dtype=np.float64)
