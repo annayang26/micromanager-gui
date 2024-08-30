@@ -336,8 +336,7 @@ def _analyze(
         avg_exponential_decay = _get_exponential_decay(average_trace)
 
         # temporary storage for trace to use for photobleaching correction
-        top_exponential_decay: tuple[list[float], list[float], float
-                                     ]= [None, None, 0]
+        top_exponential_decay = (None, None, 0)
 
         # extract roi traces
         for label_value, mask in tqdm(
@@ -352,10 +351,9 @@ def _analyze(
             # if choosing the top fitted curve
             roi_exponential_decay = _get_exponential_decay(roi_trace, 0.95)
             if roi_exponential_decay[0] is not None:
-                r_squared = roi_exponential_decay[2]
-                top_r_squared = top_exponential_decay[2]
-                if r_squared > top_r_squared:
-                    top_exponential_decay = roi_exponential_decay
+                top_exponential_decay = max(roi_exponential_decay,
+                                            top_exponential_decay,
+                                            key=lambda x: x[2])
 
             # compute the area of the masksed cells
             roi_size_pixel = masked_data.shape[1]
@@ -387,11 +385,10 @@ def _analyze(
         exponential_decay = avg_exponential_decay if (
             abs(avg_r_squared-top_r_squared)<0.01) else (top_exponential_decay)
 
-        if exponential_decay[0] is None:
-            i = 1
-            while exponential_decay[0] is None:
-                exponential_decay = _get_exponential_decay(average_trace, 0.98-i*0.01)
-                i += 1
+        i = 1
+        while exponential_decay[0] is None:
+            exponential_decay = _get_exponential_decay(average_trace, 0.98-i*0.01)
+            i += 1
 
         fitted_curve = exponential_decay[0]
         popts = exponential_decay[1]
