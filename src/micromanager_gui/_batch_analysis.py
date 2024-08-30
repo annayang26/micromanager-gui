@@ -79,7 +79,7 @@ class BatchAnalysis(QWidget):
                 self,
                 "Genotype PlateMap",
                 "",
-                "Choose the genotype platemap for the entire experiment.",
+                "Make sure to choose the genotype platemap for the entire experiment!",
                 is_dir=False
             )
 
@@ -87,7 +87,7 @@ class BatchAnalysis(QWidget):
                 self,
                 "Treatment PlateMap",
                 "",
-                "Choose the treatment platemap for the entire experiment.",
+                "Make sure to choose the treatment platemap for the entire experiment!",
                 is_dir=False
             )
 
@@ -335,9 +335,8 @@ def _analyze(
         avg_exponential_decay = _get_exponential_decay(average_trace)
 
         # temporary storage for trace to use for photobleaching correction
-        top_exponential_decay: list[
-            tuple[list[float], list[float], float]
-            ]= [None, None, 0]
+        top_exponential_decay: tuple[list[float], list[float], float
+                                     ]= [None, None, 0]
 
         # extract roi traces
         for label_value, mask in tqdm(
@@ -795,8 +794,7 @@ def _compile_readout_data(
     data_to_compile = analysis_data
     plate_map_keys = list(pm_data.keys())
 
-    if len(plate_map_keys) > 0 and (
-        len(list(data_to_compile.keys())) == len(plate_map_keys)):
+    if len(plate_map_keys) > 0:
         for fov, fov_dict in data_to_compile.items():
             well = fov.split('_')[0]
             if well in plate_map_keys:
