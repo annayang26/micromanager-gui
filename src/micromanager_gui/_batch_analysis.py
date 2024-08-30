@@ -187,6 +187,7 @@ class BatchAnalysis(QWidget):
                         try:
                             future.result()
                         except Exception as e:
+                            print(f'future result: {future.result()} at {f}')
                             print(f"An error occurred inside: {e}")
         except Exception as e:
             print("An error occurred: %s", e)
@@ -349,8 +350,8 @@ def _analyze(
             roi_trace = cast(np.ndarray, masked_data.mean(axis=1))
 
             # if choosing the top fitted curve
-            roi_exponential_decay = _get_exponential_decay(roi_trace)
-            if roi_exponential_decay is not None:
+            roi_exponential_decay = _get_exponential_decay(roi_trace, 0.95)
+            if roi_exponential_decay[0] is not None:
                 r_squared = roi_exponential_decay[2]
                 top_r_squared = top_exponential_decay[2]
                 if r_squared > top_r_squared:
@@ -378,12 +379,19 @@ def _analyze(
                 condition_1=condition_1,
                 condition_2=condition_2,
             )
-        # average_fitted_curve = exponential_decay[0]
-        # popts = exponential_decay[1]
-        avg_r_squared = avg_exponential_decay[2]
-        top_r_squared = top_exponential_decay[2]
+
+        avg_r_squared = avg_exponential_decay[2] if (
+            avg_exponential_decay[0] is not None) else 0
+        top_r_squared = top_exponential_decay[2] if (
+            top_exponential_decay[0] is not None) else 0
         exponential_decay = avg_exponential_decay if (
-            avg_r_squared > top_r_squared) else (top_exponential_decay)
+            abs(avg_r_squared-top_r_squared)<0.01) else (top_exponential_decay)
+
+        if exponential_decay[0] is None:
+            i = 1
+            while exponential_decay[0] is None:
+                exponential_decay = _get_exponential_decay(average_trace, 0.98-i*0.01)
+                i += 1
 
         fitted_curve = exponential_decay[0]
         popts = exponential_decay[1]
@@ -501,7 +509,7 @@ def _extract_metadata(meta: list[dict]) -> tuple[float]:
     return binning, magnification, pixel_size, objective, exposure, framerate
 
 def _get_exponential_decay(
-    trace: np.ndarray
+    trace: np.ndarray, cut_off: float = 0.98
 ) -> tuple[list[float], list[float], float] | None:
     """Fit an exponential decay to the trace.
 
@@ -524,8 +532,8 @@ def _get_exponential_decay(
         return None
 
     return (
-        None
-        if r_squared <= 0.98
+        (None, None, None)
+        if r_squared <= cut_off
         else (fitted_curve.tolist(), popt.tolist(), float(r_squared))
     )
 
@@ -542,16 +550,16 @@ def _cell_size_in_um(cell_size_pixel: int, binning: int,
 
     return cell_size_um
 
-def calculate_dff(pc_trace):
+def calculate_dff(pc_trace: np.ndarray) -> list[float]:
     dff = []
-    bg, median = _calculate_bg(pc_trace, 100)
+    bg, _ = _calculate_bg(pc_trace, 100)
     bg = list(bg)
     dff = (pc_trace - bg)/bg
     dff = dff - np.min(dff)
 
     return dff
 
-def _calculate_bg(f: np.ndarray, window: int):
+def _calculate_bg(f: np.ndarray, window: int) -> tuple[np.ndarray, list[float]]:
     background = np.zeros_like(f)
     background[0] = f[0]
     median = [background[0]]
