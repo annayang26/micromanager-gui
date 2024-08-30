@@ -350,7 +350,7 @@ def _analyze(
 
             # if choosing the top fitted curve
             roi_exponential_decay = _get_exponential_decay(roi_trace, 0.95)
-            if roi_exponential_decay[0] is not None:
+            if roi_exponential_decay and roi_exponential_decay[0] is not None:
                 top_exponential_decay = max(roi_exponential_decay,
                                             top_exponential_decay,
                                             key=lambda x: x[2])
@@ -378,9 +378,9 @@ def _analyze(
                 condition_2=condition_2,
             )
 
-        avg_r_squared = avg_exponential_decay[2] if (
+        avg_r_squared = avg_exponential_decay[2] if (avg_exponential_decay and
             avg_exponential_decay[0] is not None) else 0
-        top_r_squared = top_exponential_decay[2] if (
+        top_r_squared = top_exponential_decay[2] if (top_exponential_decay and
             top_exponential_decay[0] is not None) else 0
         exponential_decay = avg_exponential_decay if (
             abs(avg_r_squared-top_r_squared)<0.01) else (top_exponential_decay)
@@ -507,7 +507,7 @@ def _extract_metadata(meta: list[dict]) -> tuple[float]:
 
 def _get_exponential_decay(
     trace: np.ndarray, cut_off: float = 0.98
-) -> tuple[list[float], list[float], float] | None:
+) -> tuple[list[float], list[float], float]:
     """Fit an exponential decay to the trace.
 
     Returns None if the R squared value is less than 0.9.
