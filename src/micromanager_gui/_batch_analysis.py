@@ -136,6 +136,9 @@ class BatchAnalysis(QWidget):
             future.cancel()
         if self._run_worker is not None:
             self._run_worker.quit()
+        self._plate_map_data = {}
+        self._genotype_pm = None
+        self._treatment_pm = None
 
     def _run(self) -> None:
         input_path = self._input_path.value()
