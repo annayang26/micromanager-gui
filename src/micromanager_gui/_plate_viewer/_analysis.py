@@ -1141,13 +1141,14 @@ class _AnalyseCalciumTraces(QWidget):
                     active_cells: int = 0
 
                     for roiData in fov_dict.values():
-                        if roiData.activity:
-                            cell_size_list.append(roiData.cell_size)
-                            amplitude_list.append(roiData.mean_amplitude)
-                            frequency_list.append(roiData.frequency)
-                            iei_list.append(roiData.mean_iei)
-                            rise_time_list.append(roiData.mean_rise_time)
-                            active_cells += 1
+                        if not roiData.activity:
+                            continue
+                        cell_size_list.append(roiData.cell_size)
+                        amplitude_list.append(roiData.mean_amplitude)
+                        frequency_list.append(roiData.frequency)
+                        iei_list.append(roiData.mean_iei)
+                        rise_time_list.append(roiData.mean_rise_time)
+                        active_cells += 1
 
                     mean_amplitude_fov = np.nanmean(amplitude_list, dtype=np.float64)
                     mean_cell_size_fov = np.nanmean(cell_size_list, dtype=np.float64)
