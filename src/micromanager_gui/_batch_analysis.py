@@ -176,11 +176,12 @@ class BatchAnalysis(QWidget):
                 max_workers=cpu_count
                 ) as executor:
                 for f, label in zip(recording_file_path, labels_path):
-                    self._futures = [
+                    futures = [
                         executor.submit(_analyze_data, f, label,
                                             self._plate_map_data, self._genotype_pm,
                                             self._treatment_pm, self._stop_event)
                     ]
+                    self._futures.append(futures)
 
                     for future in tqdm(
                         concurrent.futures.as_completed(self._futures),
@@ -277,11 +278,13 @@ def _analyze_data(data_path: str, label_path: str,
         positions=positions,
         stop_event=stop_event
     )
-
-    output_csv(output_path=path,
-               analysis_data=analysis_data,
-               pm_data=pm_data,
-               )
+    try:
+        output_csv(output_path=path,
+                analysis_data=analysis_data,
+                pm_data=pm_data,
+                )
+    except Exception as e:
+        print("CSV files failed to compile! Error: %s", e)
 
 def _analyze(
     data: OMEZarrReader | TensorstoreZarrReader,
@@ -804,6 +807,8 @@ def _compile_readout_data(
 
     if len(plate_map_keys) > 0:
         for fov, fov_dict in data_to_compile.items():
+            if len(fov_dict.keys())  == 0:
+                continue
             well = fov.split('_')[0]
             if well in plate_map_keys:
                 genotype = pm_data[well].get("condition_1")
@@ -825,12 +830,17 @@ def _compile_readout_data(
                         rise_time_list.append(roiData.mean_rise_time)
                         active_cells += 1
 
-                mean_amplitude_fov = np.nanmean(amplitude_list, dtype=np.float64)
-                mean_cell_size_fov = np.nanmean(cell_size_list, dtype=np.float64)
-                mean_frequency_fov = np.nanmean(frequency_list, dtype=np.float64)
+                if len(amplitude_list) > 0:
+                    mean_amplitude_fov = np.nanmean(amplitude_list, dtype=np.float64)
+                if len(cell_size_list) > 0:
+                    mean_cell_size_fov = np.nanmean(cell_size_list, dtype=np.float64)
+                if len(frequency_list) > 0:
+                    mean_frequency_fov = np.nanmean(frequency_list, dtype=np.float64)
                 # mean_max_slope_fov = np.mean(max_slope_list)
-                mean_iei_fov = np.nanmean(iei_list, dtype=np.float64)
-                mean_rise_time_fov = np.nanmean(rise_time_list, dtype=np.float64)
+                if len(iei_list) > 0:
+                    mean_iei_fov = np.nanmean(iei_list, dtype=np.float64)
+                if len(rise_time_list) > 0:
+                    mean_rise_time_fov = np.nanmean(rise_time_list, dtype=np.float64)
                 pctg_active = active_cells / len(list(fov_dict.keys())) * 100
 
                 if genotype not in mean_amplitude_dict:
