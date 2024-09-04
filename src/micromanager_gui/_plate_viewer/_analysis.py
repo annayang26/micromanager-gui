@@ -1100,11 +1100,16 @@ class _AnalyseCalciumTraces(QWidget):
                                     row = 5
 
                                 if i < len(data_list):
-                                    entry = float(data_list[i])
-                                    wkst.write_number(row,
-                                                      start*col_per_treatment+i+1,
-                                                      entry,
-                                                      num_format)
+                                    entry = data_list[i]
+                                    if entry == 'N/A':
+                                        wkst.write(row,
+                                                   start*col_per_treatment+i+1,
+                                                   entry)
+                                    else:
+                                        wkst.write_number(row,
+                                                        start*col_per_treatment+i+1,
+                                                        float(entry),
+                                                        num_format)
                                 else:
                                     entry = 'N/A'
                                     wkst.write(row, start*col_per_treatment+i+1, entry)
@@ -1150,13 +1155,25 @@ class _AnalyseCalciumTraces(QWidget):
                         rise_time_list.append(roiData.mean_rise_time)
                         active_cells += 1
 
-                    mean_amplitude_fov = np.nanmean(amplitude_list, dtype=np.float64)
-                    mean_cell_size_fov = np.nanmean(cell_size_list, dtype=np.float64)
-                    mean_frequency_fov = np.nanmean(frequency_list, dtype=np.float64)
+                    mean_amplitude_fov = np.nanmean(amplitude_list, dtype=np.float64
+                                                    ) if (len(amplitude_list)>0
+                                                          ) else 'N/A'
+                    mean_cell_size_fov = np.nanmean(cell_size_list, dtype=np.float64
+                                                    ) if (len(cell_size_list)>0
+                                                          ) else 'N/A'
+                    mean_frequency_fov = np.nanmean(frequency_list, dtype=np.float64
+                                                    ) if (len(frequency_list)>0
+                                                          ) else 'N/A'
                     # mean_max_slope_fov = np.mean(max_slope_list)
-                    mean_iei_fov = np.nanmean(iei_list, dtype=np.float64)
-                    mean_rise_time_fov = np.nanmean(rise_time_list, dtype=np.float64)
-                    pctg_active = active_cells / len(list(fov_dict.keys())) * 100
+                    mean_iei_fov = np.nanmean(iei_list, dtype=np.float64
+                                                    ) if (len(iei_list)>0
+                                                          ) else 'N/A'
+                    mean_rise_time_fov = np.nanmean(rise_time_list, dtype=np.float64
+                                                    ) if (len(rise_time_list)>0
+                                                          ) else 'N/A'
+                    pctg_active = active_cells / len(list(fov_dict.keys())) * 100 if (
+                                                    len(cell_size_list)>0
+                                                          ) else 'N/A'
 
                     if genotype not in mean_amplitude_dict:
                         mean_amplitude_dict[genotype] = {}
