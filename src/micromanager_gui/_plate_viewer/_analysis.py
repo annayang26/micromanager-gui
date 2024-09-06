@@ -902,7 +902,7 @@ class _AnalyseCalciumTraces(QWidget):
         amplitudes = []
         start_indices = []
         end_indices = []
-        remove_peaks = []
+        new_peaks = []
 
         if len(peaks) < 2:
             return
@@ -970,25 +970,23 @@ class _AnalyseCalciumTraces(QWidget):
             amplitude = 0
 
             if len(spk_to_end) < min_dist or len(start_to_spk) < min_dist:
-                remove_peaks.append(peak)
-            else:
-                f_start_index = int(peak - (len(start_to_spk) -
-                                            np.argmin(start_to_spk)))
-                f_end_index = int(peak + np.argmin(spk_to_end))
+                continue
 
-                if (peak-f_start_index < min_dist
-                    or f_end_index - peak < min_dist):
-                    remove_peaks.append(peak)
-                else:
-                    amplitude = dff[peak] - dff[f_start_index]
+            f_start_index = int(peak - (len(start_to_spk) -
+                                        np.argmin(start_to_spk)))
+            f_end_index = int(peak + np.argmin(spk_to_end))
+
+            if (peak-f_start_index < min_dist
+                or f_end_index - peak < min_dist):
+                continue
+
+            amplitude = dff[peak] - dff[f_start_index]
 
             if amplitude > 0:
                 start_indices.append(f_start_index)
                 end_indices.append(f_end_index)
                 amplitudes.append(amplitude)
-
-
-        new_peaks = [peak for peak in peaks if peak not in remove_peaks]
+                new_peaks.append(peak)
 
         return amplitudes, start_indices, end_indices, new_peaks
 
@@ -1044,11 +1042,13 @@ class _AnalyseCalciumTraces(QWidget):
                 limit_range = int((peak + 1 - s)/3)
                 if s + limit_range >= peak - limit_range:
                     print(f"Invalid range for peak {peak}, start {s}")
+                    rise_time.append(np.nan)
                     continue
 
                 rise_range = dff[s+limit_range:(peak+1)-limit_range]
                 if len(rise_range) == 0:
                     print(f"Rise range is empty for peak {peak}, start {s}")
+                    rise_time.append(np.nan)
                     continue
 
                 half_amp = amp/2 + dff[s]
