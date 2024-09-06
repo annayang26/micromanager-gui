@@ -1050,8 +1050,9 @@ class _AnalyseCalciumTraces(QWidget):
                     print(f"Rise range is empty for peak {peak}, start {s}")
                     continue
 
-                half_amp = amp/2 + rise_range[0]
-                half_amp_idx = np.argmin([abs(signal - half_amp) for signal in rise_range])
+                half_amp = amp/2 + dff[s]
+                half_amp_idx = np.argmin(
+                    [abs(signal - half_amp) for signal in rise_range])
                 rise_time.append((limit_range+half_amp_idx)/framerate) #s
             except Exception as e:
                 print(f'error in rise time calculation {e}', )
