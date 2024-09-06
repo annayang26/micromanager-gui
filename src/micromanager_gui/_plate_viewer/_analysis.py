@@ -628,8 +628,15 @@ class _AnalyseCalciumTraces(QWidget):
             # find the peaks in the bleach corrected trace
             peaks = self._find_peaks(d_dff, prominence=prominence) # for one ROI
 
+            if len(peaks) < 2:
+                continue
+
             # Peaks
             amplitudes, start, end, new_peaks = self._get_amplitude(d_dff, peaks)
+
+            if new_peaks is None or len(new_peaks) < 2:
+                continue
+
             # max_slopes = self._get_max_slope(d_dff, new_peaks, start)
             rise_time = self._get_rise_time(d_dff,
                                             amplitudes,
@@ -638,16 +645,10 @@ class _AnalyseCalciumTraces(QWidget):
                                             framerate)
             decay_time = self._get_decay_time(new_peaks, end, framerate)
 
-            if len(new_peaks) < 2:
-                active = False
-                continue
-
             #ROIData
             iei = self._get_iei(new_peaks, framerate)
-            mean_iei = mean_iei_stdev = None
-            if iei:
-                mean_iei = np.mean(iei)
-                mean_iei_stdev = np.std(iei)
+            mean_iei = np.mean(iei)
+            mean_iei_stdev = np.std(iei)
             mean_amplitude = np.mean(amplitudes)
             mean_amplitude_stdev = np.std(amplitudes)
             frequency = len(new_peaks) / (recording_time) # events per second
@@ -903,76 +904,88 @@ class _AnalyseCalciumTraces(QWidget):
         end_indices = []
         remove_peaks = []
 
-        if peaks:
-            dff_deriv = np.diff(dff)
-            len_dff_deriv = len(dff_deriv)
+        if len(peaks) < 2:
+            return
 
-            for peak in peaks:
-                start_index = peak
-                end_index = peak
-                under_thresh_count = 0
-                total_count = 0
+        dff_deriv = np.diff(dff)
+        len_dff_deriv = len(dff_deriv)
 
-                if start_index > 0:
-                    while start_index > 0 and total_count < total_dist:
-                        start_index -= 1
-                        total_count += 1
-                        if start_index in peaks:
-                            negative_count = 0
-                            while start_index < len_dff_deriv and\
-                                  dff_deriv[start_index] < 0 and\
-                                      negative_count < neg_reset_num:
-                                start_index += 1
-                                if dff_deriv[start_index] < 0:
-                                    negative_count += 1
-                                else:
-                                    negative_count = 0
-                            break
-                        if dff_deriv[start_index] < deriv_threshold:
-                            under_thresh_count += 1
-                        else:
-                            under_thresh_count = 0
-                        if under_thresh_count >= reset_num:
-                            break
+        for peak in peaks:
+            start_index = peak
+            end_index = peak
+            under_thresh_count = 0
+            total_count = 0
 
-                under_thresh_count = 0
-                total_count = 0
+            if start_index >= 0:
+                while (start_index >= 0
+                       and total_count < total_dist
+                       and start_index + min_dist <= peak):
+                    start_index -= 1
+                    total_count += 1
+                    if start_index in peaks:
+                        negative_count = 0
+                        while start_index < len_dff_deriv and\
+                                dff_deriv[start_index] < 0 and\
+                                    negative_count < neg_reset_num and\
+                                        start_index + min_dist <= peak:
+                            start_index += 1
+                            if dff_deriv[start_index] < 0:
+                                negative_count += 1
+                            else:
+                                negative_count = 0
+                        break
+                    if dff_deriv[start_index] < deriv_threshold:
+                        under_thresh_count += 1
+                    else:
+                        under_thresh_count = 0
+                    if under_thresh_count >= reset_num:
+                        break
 
-                if end_index < len_dff_deriv - 1:
-                    while end_index < len_dff_deriv - 1 and total_count < total_dist:
-                        end_index += 1
-                        total_count += 1
-                        if end_index in peaks:
-                            negative_count = 0
-                            while (end_index >= 0
-                                   and dff_deriv[end_index] > 0
-                                   and negative_count < neg_reset_num):
-                                end_index -= 1
-                                if dff_deriv[end_index] > 0:
-                                    negative_count += 1
-                                else:
-                                    negative_count = 0
-                            break
-                        if dff_deriv[end_index] < deriv_threshold:
-                            under_thresh_count += 1
-                        else:
-                            under_thresh_count = 0
-                        if under_thresh_count >= reset_num:
-                            break
+            under_thresh_count = 0
+            total_count = 0
 
-                spk_to_end = dff[peak:(end_index + 1)]
-                start_to_spk = dff[start_index:peak]
+            if end_index < len_dff_deriv - 1:
+                while (end_index < len_dff_deriv - 1
+                       and total_count < total_dist
+                       and end_index >= peak + min_dist):
+                    end_index += 1
+                    total_count += 1
+                    if end_index in peaks:
+                        negative_count = 0
+                        while (end_index >= peak + min_dist
+                                and dff_deriv[end_index] > 0
+                                and negative_count < neg_reset_num):
+                            end_index -= 1
+                            if dff_deriv[end_index] > 0:
+                                negative_count += 1
+                            else:
+                                negative_count = 0
+                        break
+                    if dff_deriv[end_index] < deriv_threshold:
+                        under_thresh_count += 1
+                    else:
+                        under_thresh_count = 0
+                    if under_thresh_count >= reset_num:
+                        break
+
+            spk_to_end = dff[peak:(end_index + 1)]
+            start_to_spk = dff[start_index:peak]
+            amplitude = 0
+
+            if len(spk_to_end) < min_dist or len(start_to_spk) < min_dist:
+                remove_peaks.append(peak)
+            else:
                 f_start_index = int(peak - (len(start_to_spk) -
-                                            (np.argmin(start_to_spk) + 1)))
+                                            np.argmin(start_to_spk)))
                 f_end_index = int(peak + np.argmin(spk_to_end))
                 amplitude = dff[peak] - dff[f_start_index]
 
-                if amplitude > 0:
-                    start_indices.append(f_start_index)
-                    end_indices.append(f_end_index)
-                    amplitudes.append(amplitude)
-                else:
-                    remove_peaks.append(peak)
+            if amplitude > 0:
+                start_indices.append(f_start_index)
+                end_indices.append(f_end_index)
+                amplitudes.append(amplitude)
+            else:
+                remove_peaks.append(peak)
 
         new_peaks = [peak for peak in peaks if peak not in remove_peaks]
 
@@ -1009,12 +1022,10 @@ class _AnalyseCalciumTraces(QWidget):
     # IEI: peak to peak
     def _get_iei(self, peaks: list[int], framerate: float) -> list[float]:
         """Calculate the interevent interval."""
-        iei = []
-        if len(peaks) > 0:
-            iei_frames = np.diff(np.array(peaks))
-            iei.append(iei_frames/framerate) #s
+        iei_frames = np.diff(np.array(peaks))
+        iei = cast(list, iei_frames/framerate) #s
 
-        return (None if len(iei) == 0 else iei)
+        return iei
 
     # NOTE: raise time here is from base to peak;
     # FluoroSNNAP uses from base to max_slope point
@@ -1025,12 +1036,14 @@ class _AnalyseCalciumTraces(QWidget):
 
         # NOTE: time to reach half of amplitude
         for amp, peak, s in zip(amplitude, peaks, start):
-            limit_range = int((peak + 1 - s)/5)
-            rise_range = dff[s+limit_range:(peak+1)-limit_range]
-            half_amp = amp/2 + rise_range[0]
-            half_amp_idx = np.argmin([abs(signal - half_amp) for signal in rise_range])
-            rise_time.append((limit_range+half_amp_idx)/framerate) #s
-        # rise_time = [((peaks[i] - start[i] + 1)/framerate) for i in range(len(peaks))]
+            try:
+                limit_range = int((peak + 1 - s)/3)
+                rise_range = dff[s+limit_range:(peak+1)-limit_range]
+                half_amp = amp/2 + dff[0]
+                half_amp_idx = np.argmin([abs(signal - half_amp) for signal in rise_range])
+                rise_time.append((limit_range+half_amp_idx)/framerate) #s
+            except Exception as e:
+                print('error in rise time calculation, %s', e)
 
         return rise_time
 
