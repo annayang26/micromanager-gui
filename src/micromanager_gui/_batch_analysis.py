@@ -710,17 +710,27 @@ def _get_rise_time(dff: list[float], amplitude: list[float], peaks: list[int],
                     start: list[int], framerate: float) -> list[float]:
     """Get Raise Time for each peak."""
     rise_time = []
+    if not (len(amplitude) == len(peaks) == len(start)):
+        raise ValueError("The length of amplitude, peaks, and start lists must be equal.")
 
     # NOTE: time to reach half of amplitude
     for amp, peak, s in zip(amplitude, peaks, start):
         try:
             limit_range = int((peak + 1 - s)/3)
+            if s + limit_range >= peak - limit_range:
+                print(f"Invalid range for peak {peak}, start {s}")
+                continue
+
             rise_range = dff[s+limit_range:(peak+1)-limit_range]
+
+            if len(rise_range) == 0:
+                print(f"Rise range is empty for peak {peak}, start {s}")
+                continue
             half_amp = amp/2 + dff[s]
             half_amp_idx = np.argmin([abs(signal - half_amp) for signal in rise_range])
             rise_time.append((limit_range+half_amp_idx)/framerate) #s
         except Exception as e:
-            print('error in rise time calculation, %s', e)
+            print(f'error in rise time calculation, {e}')
 
     return rise_time
 
