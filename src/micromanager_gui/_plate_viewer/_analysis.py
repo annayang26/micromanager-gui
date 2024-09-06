@@ -918,16 +918,14 @@ class _AnalyseCalciumTraces(QWidget):
 
             if start_index >= 0:
                 while (start_index >= 0
-                       and total_count < total_dist
-                       and start_index + min_dist <= peak):
+                       and total_count < total_dist):
                     start_index -= 1
                     total_count += 1
                     if start_index in peaks:
                         negative_count = 0
                         while start_index < len_dff_deriv and\
                                 dff_deriv[start_index] < 0 and\
-                                    negative_count < neg_reset_num and\
-                                        start_index + min_dist <= peak:
+                                    negative_count < neg_reset_num:
                             start_index += 1
                             if dff_deriv[start_index] < 0:
                                 negative_count += 1
@@ -946,13 +944,12 @@ class _AnalyseCalciumTraces(QWidget):
 
             if end_index < len_dff_deriv - 1:
                 while (end_index < len_dff_deriv - 1
-                       and total_count < total_dist
-                       and end_index >= peak + min_dist):
+                       and total_count < total_dist):
                     end_index += 1
                     total_count += 1
                     if end_index in peaks:
                         negative_count = 0
-                        while (end_index >= peak + min_dist
+                        while (end_index >= peak
                                 and dff_deriv[end_index] > 0
                                 and negative_count < neg_reset_num):
                             end_index -= 1
@@ -978,14 +975,18 @@ class _AnalyseCalciumTraces(QWidget):
                 f_start_index = int(peak - (len(start_to_spk) -
                                             np.argmin(start_to_spk)))
                 f_end_index = int(peak + np.argmin(spk_to_end))
-                amplitude = dff[peak] - dff[f_start_index]
+
+                if (peak-f_start_index < min_dist
+                    or f_end_index - peak < min_dist):
+                    remove_peaks.append(peak)
+                else:
+                    amplitude = dff[peak] - dff[f_start_index]
 
             if amplitude > 0:
                 start_indices.append(f_start_index)
                 end_indices.append(f_end_index)
                 amplitudes.append(amplitude)
-            else:
-                remove_peaks.append(peak)
+
 
         new_peaks = [peak for peak in peaks if peak not in remove_peaks]
 
