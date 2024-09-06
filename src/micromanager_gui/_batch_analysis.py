@@ -423,22 +423,23 @@ def _analyze(
             # find the peaks in the bleach corrected trace
             peaks = _find_peaks(d_dff, prominence=prominence) # for one ROI
 
+            if len(peaks) < 2:
+                continue
+
             # Peaks
             amplitudes, start, end, new_peaks = _get_amplitude(d_dff, peaks)
+
+            if new_peaks is None or len(new_peaks) < 2:
+                continue
+
             # max_slopes = self._get_max_slope(d_dff, new_peaks, start)
             rise_time = _get_rise_time(d_dff, amplitudes, new_peaks, start, framerate)
             decay_time = _get_decay_time(new_peaks, end, framerate)
 
-            if len(new_peaks) < 2:
-                active = False
-                continue
-
             #ROIData
             iei = _get_iei(new_peaks, framerate)
-            mean_iei = mean_iei_stdev = None
-            if iei:
-                mean_iei = np.mean(iei)
-                mean_iei_stdev = np.std(iei)
+            mean_iei = np.mean(iei)
+            mean_iei_stdev = np.std(iei)
             mean_amplitude = np.mean(amplitudes)
             mean_amplitude_stdev = np.std(amplitudes)
             frequency = len(new_peaks) / (recording_time) # events per second
@@ -598,7 +599,7 @@ def _get_amplitude(dff: list[float], peaks: list[int], deriv_threshold=0.01,
     amplitudes = []
     start_indices = []
     end_indices = []
-    remove_peaks = []
+    new_peaks = []
 
     if len(peaks) < 2:
         return
@@ -614,16 +615,14 @@ def _get_amplitude(dff: list[float], peaks: list[int], deriv_threshold=0.01,
 
         if start_index >= 0:
             while (start_index >= 0
-                    and total_count < total_dist
-                    and start_index + min_dist <= peak):
+                    and total_count < total_dist):
                 start_index -= 1
                 total_count += 1
                 if start_index in peaks:
                     negative_count = 0
                     while start_index < len_dff_deriv and\
                             dff_deriv[start_index] < 0 and\
-                                negative_count < neg_reset_num and\
-                                    start_index + min_dist <= peak:
+                                negative_count < neg_reset_num:
                         start_index += 1
                         if dff_deriv[start_index] < 0:
                             negative_count += 1
@@ -642,13 +641,12 @@ def _get_amplitude(dff: list[float], peaks: list[int], deriv_threshold=0.01,
 
         if end_index < len_dff_deriv - 1:
             while (end_index < len_dff_deriv - 1
-                    and total_count < total_dist
-                    and end_index >= peak + min_dist):
+                    and total_count < total_dist):
                 end_index += 1
                 total_count += 1
                 if end_index in peaks:
                     negative_count = 0
-                    while (end_index >= peak + min_dist
+                    while (end_index >= peak
                             and dff_deriv[end_index] > 0
                             and negative_count < neg_reset_num):
                         end_index -= 1
@@ -669,21 +667,23 @@ def _get_amplitude(dff: list[float], peaks: list[int], deriv_threshold=0.01,
         amplitude = 0
 
         if len(spk_to_end) < min_dist or len(start_to_spk) < min_dist:
-            remove_peaks.append(peak)
-        else:
-            f_start_index = int(peak - (len(start_to_spk) -
-                                        np.argmin(start_to_spk)))
-            f_end_index = int(peak + np.argmin(spk_to_end))
-            amplitude = dff[peak] - dff[f_start_index]
+            continue
+
+        f_start_index = int(peak - (len(start_to_spk) -
+                                    np.argmin(start_to_spk)))
+        f_end_index = int(peak + np.argmin(spk_to_end))
+
+        if (peak - f_start_index < min_dist
+            or f_end_index - peak < min_dist):
+            continue
+
+        amplitude = dff[peak] - dff[f_start_index]
 
         if amplitude > 0:
             start_indices.append(f_start_index)
             end_indices.append(f_end_index)
             amplitudes.append(amplitude)
-        else:
-            remove_peaks.append(peak)
-
-    new_peaks = [peak for peak in peaks if peak not in remove_peaks]
+            new_peaks.append(peak)
 
     return amplitudes, start_indices, end_indices, new_peaks
 
@@ -719,13 +719,16 @@ def _get_rise_time(dff: list[float], amplitude: list[float], peaks: list[int],
             limit_range = int((peak + 1 - s)/3)
             if s + limit_range >= peak - limit_range:
                 print(f"Invalid range for peak {peak}, start {s}")
+                rise_time.append(np.nan)
                 continue
 
             rise_range = dff[s+limit_range:(peak+1)-limit_range]
 
             if len(rise_range) == 0:
                 print(f"Rise range is empty for peak {peak}, start {s}")
+                rise_time.append(np.nan)
                 continue
+
             half_amp = amp/2 + dff[s]
             half_amp_idx = np.argmin([abs(signal - half_amp) for signal in rise_range])
             rise_time.append((limit_range+half_amp_idx)/framerate) #s
