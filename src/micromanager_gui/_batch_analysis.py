@@ -176,11 +176,9 @@ class BatchAnalysis(QWidget):
                 max_workers=cpu_count
                 ) as executor:
                 for f, label in zip(recording_file_path, labels_path):
-                    futures = [
-                        executor.submit(_analyze_data, f, label,
+                    futures = executor.submit(_analyze_data, f, label,
                                             self._plate_map_data, self._genotype_pm,
                                             self._treatment_pm, self._stop_event)
-                    ]
                     self._futures.append(futures)
 
                     for future in tqdm(
