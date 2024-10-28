@@ -18,6 +18,9 @@ from oasis.functions import deconvolve
 from qtpy.QtCore import QSize, Signal
 from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
+    QComboBox,
+    QFileDialog,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -76,6 +79,24 @@ logger.addHandler(file_handler)
 def single_exponential(x: np.ndarray, a: float, b: float, c: float) -> np.ndarray:
     return np.array(a * np.exp(-b * x) + c)
 
+class _SelectStimulationPath(_BrowseWidget):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        label: str = "Select path to the stimulated area",
+        tooltip: str = "Choose the path to the screenshot of the stimulated area.",
+    ) -> None:
+        super().__init__(parent, label, "", tooltip, is_dir=False)
+
+    def _on_browse(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Select the {self._label_text}.",
+            "",
+            "",
+        )
+        if path:
+            self._path.setText(path)
 
 class _AnalyseCalciumTraces(QWidget):
     progress_bar_updated = Signal()
@@ -104,6 +125,9 @@ class _AnalyseCalciumTraces(QWidget):
         self._cancelled: bool = False
 
         self._reanalyze: bool = False
+
+        self._browse_stimulated_area = _SelectStimulationPath(self)
+        self._browse_stimulated_area.hide()
 
         pos_wdg = QWidget(self)
         pos_wdg.setToolTip(
@@ -167,15 +191,29 @@ class _AnalyseCalciumTraces(QWidget):
 
         self.progress_bar_updated.connect(self._update_progress_bar)
 
+        activity_wdg = QWidget(self)
+        activity_wdg_layout = QHBoxLayout(activity_wdg)
+        activity_wdg_layout.setContentsMargins(0, 0, 0, 0)
+        activity_wdg_layout.setSpacing(5)
+        activity_combo_label = QLabel("Activity type: ")
+        activity_combo_label.setSizePolicy(*FIXED)
+        self._activity_combo = QComboBox()
+        self._activity_combo.addItems(['Spontaneous activity', 'Evoked activity'])
+        self._activity_combo.currentTextChanged.connect(self._on_activity_changed)
+        activity_wdg_layout.addWidget(activity_combo_label)
+        activity_wdg_layout.addWidget(self._activity_combo)
+
         self.groupbox = QGroupBox("Extract Traces", self)
         # self.groupbox.setCheckable(True)
         # self.groupbox.setChecked(False)
-        wdg_layout = QVBoxLayout(self.groupbox)
+        wdg_layout = QGridLayout(self.groupbox)
         wdg_layout.setContentsMargins(10, 10, 10, 10)
         wdg_layout.setSpacing(5)
-        wdg_layout.addWidget(self._output_path)
-        wdg_layout.addWidget(pos_wdg)
-        wdg_layout.addWidget(progress_wdg)
+        wdg_layout.addWidget(activity_wdg, 0, 0, 1, 2)
+        wdg_layout.addWidget(self._browse_stimulated_area, 1, 0, 1, 2)
+        wdg_layout.addWidget(self._output_path, 2, 0, 1, 2)
+        wdg_layout.addWidget(pos_wdg, 3, 0, 1, 2)
+        wdg_layout.addWidget(progress_wdg, 4, 0, 1, 2)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -205,6 +243,13 @@ class _AnalyseCalciumTraces(QWidget):
     @property
     def analysis_data(self) -> dict[str, dict[str, ROIData]]:
         return self._analysis_data
+
+    def _on_activity_changed(self, text: str) -> None:
+        """Show or hide the stimulated area path widget."""
+        if text == "Evoked activity":
+            self._browse_stimulated_area.show()
+        else:
+            self._browse_stimulated_area.hide()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """Override the close event to cancel the worker."""
@@ -1098,10 +1143,11 @@ class _AnalyseCalciumTraces(QWidget):
                     num_format = wkbk.add_format({'num_format': '0.00'})
                     wkst.write(0, 0, readout)
 
-                    # write conditions
-                    for i, condition in enumerate(compiled_cond):
-                        for repeat in range(col_per_treatment):
-                            wkst.write(0, i*col_per_treatment+repeat+1, condition)
+                    if len(compiled_cond) > 1:
+                        # write conditions
+                        for i, condition in enumerate(compiled_cond):
+                            for repeat in range(col_per_treatment):
+                                wkst.write(0, i*col_per_treatment+repeat+1, condition)
 
                     # write genotypes
                     for i, genotype in enumerate(compiled_geno):
