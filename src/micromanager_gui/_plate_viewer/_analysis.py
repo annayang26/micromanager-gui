@@ -540,11 +540,14 @@ class _AnalyseCalciumTraces(QWidget):
         data, meta = self._data.isel(p=p, metadata=True)
 
         # get position name from metadata
-        well = meta[0].get("Event", {}).get("pos_name", f"pos_{str(p).zfill(4)}")
+        event_key = "mda_event" if "mda_event" in meta[0] else "Event"
+        well = meta[0].get(event_key, {}).get("pos_name", f"pos_{str(p).zfill(4)}")
+        exposure = float(meta[0].get(event_key).get('exposure'))
+        framerate = 1 / exposure
 
         total_frames = data.shape[0]
-        binning, magnification, pixel_size, objective,\
-            exposure, framerate = self._extract_metadata(meta) # exposure time in ms
+        # binning, magnification, pixel_size, objective,\
+        #     exposure, framerate = self._extract_metadata(meta) # exposure time in ms
         framerate *= 1000 # seconds
         recording_time = total_frames/framerate # in seconds
 
@@ -571,7 +574,7 @@ class _AnalyseCalciumTraces(QWidget):
         logger.info("Processing well %s", well)
 
         roi_trace: np.ndarray | list[float] | None
-        roi_size_um: float | None
+        roi_size: float | None
         small_rois: list[int] = []
 
         # average_trace = cast(np.ndarray, data.mean(axis=(1, 2)))
@@ -607,10 +610,12 @@ class _AnalyseCalciumTraces(QWidget):
 
             # compute the area of the masksed cells
             roi_size_pixel = masked_data.shape[1]
-            roi_size_um = self._cell_size_in_um(roi_size_pixel, binning, pixel_size,
-                                                objective, magnification)
+            # roi_size_um = self._cell_size_in_um(roi_size_pixel, binning, pixel_size,
+            #                                     objective, magnification)
+            px_size = meta[0].get("PixelSizeUm", None)
+            roi_size = roi_size_pixel * px_size if px_size else roi_size_pixel
 
-            if roi_size_um < 10:
+            if roi_size < 10:
                 small_rois.append(label_value)
                 continue
 
@@ -626,7 +631,7 @@ class _AnalyseCalciumTraces(QWidget):
             self._analysis_data[well][str(label_value)] = ROIData(
                 raw_trace=roi_trace.tolist(),
                 # use_for_bleach_correction=exponential_decay,
-                cell_size=roi_size_um,
+                cell_size=roi_size,
                 condition_1=condition_1,
                 condition_2=condition_2,
             )
@@ -895,6 +900,7 @@ class _AnalyseCalciumTraces(QWidget):
         self, trace: np.ndarray, prominence: float | None = None
     ) -> list[int]:
         """Smooth the trace and find the peaks."""
+        # TODO: remove the smooth and normalize here?
         smoothed_normalized = self._smooth_and_normalize(trace)
         peaks, _ = find_peaks(smoothed_normalized, width=3, prominence=prominence)
         peaks = cast(np.ndarray, peaks)
