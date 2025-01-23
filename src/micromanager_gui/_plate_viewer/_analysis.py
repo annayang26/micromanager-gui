@@ -652,6 +652,8 @@ class _AnalyseCalciumTraces(QWidget):
         fitted_curve = top_exponential_decay[0]
         popts = top_exponential_decay[1]
 
+        phase_dict: dict[int, list[float]] | None = {}
+
         # perform photobleaching correction
         logger.info(f"Performing Bleaching Correction for Well {well}.")
         for label_value in tqdm(
@@ -695,6 +697,9 @@ class _AnalyseCalciumTraces(QWidget):
             if new_peaks is None or len(new_peaks) < 2:
                 continue
 
+            phase = self._get_phase(total_frames, new_peaks)
+            if phase is not None:
+                phase_dict[label_value] = phase
             # max_slopes = self._get_max_slope(d_dff, new_peaks, start)
             rise_time = self._get_rise_time(d_dff,
                                             amplitudes,
@@ -719,7 +724,7 @@ class _AnalyseCalciumTraces(QWidget):
             # store the analysis data
             update = data.replace(
                 average_photobleaching_fitted_curve=fitted_curve,
-                use_for_bleach_correction=exponential_decay,
+                use_for_bleach_correction=top_exponential_decay,
                 average_popts=popts,
                 bleach_corrected_trace=bleach_corrected.tolist(),
                 peaks=[Peaks(peak=new_peaks[i],
@@ -743,10 +748,13 @@ class _AnalyseCalciumTraces(QWidget):
                 # mean_max_slope=mean_max_slope,
                 # mean_max_slope_stdev=mean_max_slope_stdev,
                 dff=dff.tolist(),
-                d_dff=d_dff.tolist()
+                d_dff=d_dff.tolist(),
+                phase=phase
             )
             self._analysis_data[well][str(label_value)] = update
 
+        mean_global_connectivity = self._get_mean_connectivity(phase_dict)
+        self._analysis_data[well]["mean global connectivity"] = mean_global_connectivity
         # save json file
         logger.info("Saving JSON file for Well %s.", well)
         path = Path(self._output_path.value()) / f"{well}.json"
@@ -1199,6 +1207,70 @@ class _AnalyseCalciumTraces(QWidget):
         decay_time = [((end[i] - peaks[i] + 1)/ framerate) for i in range(len(peaks))]
 
         return decay_time
+
+    def _get_phase(self, total_frames: int, peaks: list[int]) -> list[float] | None:
+        """Calculate the instantaneous phase."""
+        peaks_copy = peaks.copy()
+        if len(peaks_copy) == 0:
+            return None
+        if peaks_copy[0] != 0:
+            peaks_copy.insert(0, 0)
+        if peaks_copy[-1] != (total_frames - 1):
+            peaks_copy.append(total_frames - 1)
+
+        phase = []
+        for k in range(len(peaks_copy)-1):
+            t = peaks_copy[k]
+
+            while t < peaks_copy[k+1]:
+                instant_phase = (2 * np.pi) * ((t - peaks_copy[k])/\
+                                               (peaks_copy[k+1] - peaks_copy[k])) + \
+                                               (2 * np.pi * k)
+                phase.append(instant_phase)
+                t += 1
+        phase.append(2 * np.pi * (len(peaks_copy) - 1))
+
+        return phase
+
+    def _get_mean_connectivity(self, phase_dict: dict) -> float:
+        """Calculate the average global connectivity."""
+        connect_matrix = self._get_connect_matrix(phase_dict)
+
+        if connect_matrix is not None:
+            if len(connect_matrix) > 1:
+                mean_connect = np.median(np.sum(connect_matrix, axis=0) - 1) /\
+                    (len(connect_matrix) - 1)
+            else:
+                mean_connect = 'N/A - Only one active ROI'
+        else:
+            mean_connect = 'No calcium events detected'
+
+        return mean_connect
+
+    def _get_connect_matrix(self, phase_dict: dict) -> np.ndarray:
+        """Calculate global connectivity."""
+        def _get_sync_index(phase1: list[float], phase2: list[float]):
+            def _get_phase_diff(phase1: list[float], phase2: list[float]):
+                x_phase = np.array(phase1)
+                y_phase = np.array(phase2)
+                phase_diff = np.mod(np.abs(x_phase - y_phase), (2 * np.pi))
+
+                return phase_diff
+
+            phase_diff = _get_phase_diff(phase1, phase2)
+            sync_index = np.sqrt((np.mean(np.cos(phase_diff)) ** 2) + \
+                                 (np.mean(np.sin(phase_diff)) ** 2))
+
+            return sync_index
+
+        active_rois = list(phase_dict.keys)
+        connect_matrix = np.zeros((len(active_rois), len(active_rois)))
+        for i, r1 in enumerate(active_rois):
+            for j, r2 in enumerate(active_rois):
+                connect_matrix[i, j] = _get_sync_index(phase_dict[r1],
+                                                            phase_dict[r2])
+
+        return connect_matrix
 
     def _extract_metadata(self, meta: list[dict]) -> tuple[float]:
         """Extract information from metadata."""

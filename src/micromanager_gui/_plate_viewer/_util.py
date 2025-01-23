@@ -75,7 +75,18 @@ class ROIData(BaseClass):
     global_connectivity: float | None = None
     condition_1: str | None = None
     condition_2: str | None = None
+    phase: list[float] | None = None
     # ... add whatever other data we need
+
+@dataclass
+class NetworkData(BaseClass):
+    """NamedTuple to store network data."""
+
+    network_label: int | None = None # network label
+    mean_connection_dist: float | None = None # average connection length
+    mean_connection_stdev: float | None = None
+    mean_connections_per_neuron: int | None = None # num of cells one neuron connects to
+    roi_label: list[int] | None = None # to store the label of cells in one cluster
 
 
 def show_error_dialog(parent: QWidget, message: str) -> None:
