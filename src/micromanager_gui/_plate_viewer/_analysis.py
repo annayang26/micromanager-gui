@@ -604,10 +604,10 @@ class _AnalyseCalciumTraces(QWidget):
             #                                 top_exponential_decay,
             #                                 key=lambda x: x[2])
             mask_exp_decay, msg = self._get_best_exponential_decay(roi_trace)
-            if mask_exp_decay is not None:
+
+            if mask_exp_decay[2] is not None:
                 top_exponential_decay = max(mask_exp_decay, top_exponential_decay,
                                             key=lambda x: x[2])
-
             # compute the area of the masksed cells
             roi_size_pixel = masked_data.shape[1]
             # roi_size_um = self._cell_size_in_um(roi_size_pixel, binning, pixel_size,
@@ -675,7 +675,7 @@ class _AnalyseCalciumTraces(QWidget):
 
             # calculate the bleach corrected trace
             bleach_corrected = (
-                np.array(roi_trace) - fitted_curve + popts[2]
+                np.array(roi_trace) - fitted_curve + popts[-1]
             )
 
             # calculate the dF/F TODO: how to calculate F0?
@@ -837,7 +837,7 @@ class _AnalyseCalciumTraces(QWidget):
 
         Returns None if the R squared value is less than 0.96.
         """
-        time_points = np.arrange(len(trace))
+        time_points = np.arange(len(trace))
         scaled_time = time_points / np.max(time_points)  # Normalize `x` to [0, 1]
 
         # Initial guess for the parameters: [a1, b1, a2, b2, c]
@@ -866,32 +866,33 @@ class _AnalyseCalciumTraces(QWidget):
             return None
 
         # Return None if the R² is less than R_SQUARE_THRESHOLD
-        if r_squared <= R_SQUARE_THRESHOLD:
-            return None
-
-        return fitted_curve.tolist(), popt.tolist(), r_squared
+        return (
+            (None, None, None)
+            if r_squared <= R_SQUARE_THRESHOLD
+            else (fitted_curve.tolist(), popt.tolist(), float(r_squared))
+        )
 
     def _get_best_exponential_decay(
             self, trace: np.ndarray
             ) -> tuple[list[float], list[float], float, str] | None:
 
-        best_popts = None
+        best_popts = (None, None, None)
 
         average_popts_exp = self._get_single_exponential_decay(trace)
         average_popts_biexp = self._get_bi_exponential_decay(trace)
 
-        if average_popts_exp is None and average_popts_biexp is None:
+        if average_popts_exp[2] is None and average_popts_biexp[2] is None:
             msg = "No curve was fitted"
 
-        elif average_popts_exp is None and average_popts_biexp is not None:
+        elif average_popts_exp[2] is None and average_popts_biexp[2] is not None:
             best_popts = average_popts_biexp
             msg = "single exponential decay"
 
-        elif average_popts_exp is not None and average_popts_biexp is None:
+        elif average_popts_exp[2] is not None and average_popts_biexp[2] is None:
             best_popts = average_popts_exp
             msg = "bi-exponential decay"
 
-        elif average_popts_exp is not None and average_popts_biexp is not None:
+        elif average_popts_exp[2] is not None and average_popts_biexp[2] is not None:
             _, _, r_squared_exp = average_popts_exp
             _, _, r_squared_biexp = average_popts_biexp
 
