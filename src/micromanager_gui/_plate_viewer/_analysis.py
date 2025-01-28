@@ -1368,12 +1368,10 @@ class _AnalyseCalciumTraces(QWidget):
         if self._loaded_data():
             data_to_compile = self._plate_viewer._analysis_data
         plate_map_keys = list(self._plate_map_data.keys())
-        print(f"data_to compile keys: {list(data_to_compile.keys())}")
 
         if len(plate_map_keys) > 0:
             for fov, fov_dict in data_to_compile.items():
                 well = fov.split('_')[0]
-                print(f"well: {well}")
                 if well in plate_map_keys:
                     genotype = self._plate_map_data[well].get("condition_1")
                     treatment = self._plate_map_data[well].get("condition_2")
