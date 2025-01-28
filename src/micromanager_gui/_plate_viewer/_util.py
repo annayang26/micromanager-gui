@@ -72,7 +72,6 @@ class ROIData(BaseClass):
     mean_iei_stdev: float | None = None
     mean_max_slope: float | None = None
     mean_max_slope_stdev: float | None = None
-    global_connectivity: float | None = None
     condition_1: str | None = None
     condition_2: str | None = None
     phase: list[float] | None = None

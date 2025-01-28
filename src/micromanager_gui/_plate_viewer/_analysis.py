@@ -649,6 +649,7 @@ class _AnalyseCalciumTraces(QWidget):
         #     exponential_decay = self._get_exponential_decay(average_trace, 0.98-i*0.01)
         #     i += 1
 
+        #TODO: debug after this; seems like the photobleaching step is causing the bug
         fitted_curve = top_exponential_decay[0]
         popts = top_exponential_decay[1]
 
@@ -707,7 +708,7 @@ class _AnalyseCalciumTraces(QWidget):
                                             start,
                                             framerate)
             decay_time = self._get_decay_time(new_peaks, end, framerate)
-
+            # print("roi data")
             #ROIData
             iei = self._get_iei(new_peaks, framerate)
             mean_iei = np.mean(iei)
@@ -822,7 +823,7 @@ class _AnalyseCalciumTraces(QWidget):
             r_squared = 1 - (ss_res / ss_total)
         except Exception as e:
             logger.error("Error fitting curve: %s", e)
-            return None
+            return (None, None, None)
 
         return (
             (None, None, None)
@@ -863,7 +864,7 @@ class _AnalyseCalciumTraces(QWidget):
             r_squared = 1 - (ss_res / ss_total)
         except Exception as e:
             print(f"Error fitting bi-exponential curve: {e}")
-            return None
+            return (None, None, None)
 
         # Return None if the R² is less than R_SQUARE_THRESHOLD
         return (
@@ -1176,7 +1177,8 @@ class _AnalyseCalciumTraces(QWidget):
         rise_time = []
 
         if not (len(amplitude) == len(peaks) == len(start)):
-            raise ValueError("The length of amplitude, peaks, and start lists must be equal.")
+            raise ValueError("The length of amplitude,\
+                             peaks, and start lists must be equal.")
 
         # NOTE: time to reach half of amplitude
         for amp, peak, s in zip(amplitude, peaks, start):
@@ -1264,7 +1266,7 @@ class _AnalyseCalciumTraces(QWidget):
 
             return sync_index
 
-        active_rois = list(phase_dict.keys)
+        active_rois = list(phase_dict.keys())
         connect_matrix = np.zeros((len(active_rois), len(active_rois)))
         for i, r1 in enumerate(active_rois):
             for j, r2 in enumerate(active_rois):
@@ -1291,7 +1293,8 @@ class _AnalyseCalciumTraces(QWidget):
         exp_name = Path(self._output_path.value()).parent.name
 
         readout_list = ['Average Cell Size', 'Average Amplitude', 'Average Frequency',
-                        'Average Rise Time', 'Average IEI', "Percentage Active"]
+                        'Average Rise Time', 'Average IEI', "Percentage Active",
+                        "Global Connectivity"]
 
         compiled_data_list = self._compile_readout_data()
         compiled_cond = self._compile_conditions()
@@ -1359,15 +1362,18 @@ class _AnalyseCalciumTraces(QWidget):
         mean_rise_time_dict = {}
         mean_iei_dict = {}
         activity_dict = {}
+        mean_connectivity_dict = {}
 
         data_to_compile = self.analysis_data
         if self._loaded_data():
             data_to_compile = self._plate_viewer._analysis_data
         plate_map_keys = list(self._plate_map_data.keys())
+        print(f"data_to compile keys: {list(data_to_compile.keys())}")
 
         if len(plate_map_keys) > 0:
             for fov, fov_dict in data_to_compile.items():
                 well = fov.split('_')[0]
+                print(f"well: {well}")
                 if well in plate_map_keys:
                     genotype = self._plate_map_data[well].get("condition_1")
                     treatment = self._plate_map_data[well].get("condition_2")
@@ -1377,16 +1383,17 @@ class _AnalyseCalciumTraces(QWidget):
                     iei_list = []
                     rise_time_list = []
                     active_cells: int = 0
+                    mean_global_connectivity = fov_dict.get(
+                        "mean global connectivity")
 
                     for roiData in fov_dict.values():
-                        if not roiData.activity:
-                            continue
-                        cell_size_list.append(roiData.cell_size)
-                        amplitude_list.append(roiData.mean_amplitude)
-                        frequency_list.append(roiData.frequency)
-                        iei_list.append(roiData.mean_iei)
-                        rise_time_list.append(roiData.mean_rise_time)
-                        active_cells += 1
+                        if isinstance(roiData, ROIData) and roiData.activity:
+                            cell_size_list.append(roiData.cell_size)
+                            amplitude_list.append(roiData.mean_amplitude)
+                            frequency_list.append(roiData.frequency)
+                            iei_list.append(roiData.mean_iei)
+                            rise_time_list.append(roiData.mean_rise_time)
+                            active_cells += 1
 
                     mean_amplitude_fov = np.nanmean(amplitude_list, dtype=np.float64
                                                     ) if (len(amplitude_list)>0
@@ -1444,12 +1451,19 @@ class _AnalyseCalciumTraces(QWidget):
                         activity_dict[genotype][treatment] = []
                     activity_dict[genotype][treatment].append(pctg_active)
 
+                    if genotype not in mean_connectivity_dict:
+                        mean_connectivity_dict[genotype] = {}
+                    if treatment not in mean_connectivity_dict[genotype]:
+                        mean_connectivity_dict[genotype][treatment] = []
+                    mean_connectivity_dict[genotype][treatment].append(mean_global_connectivity)
+
             data_by_metrics.append(mean_cell_size_dict)
             data_by_metrics.append(mean_amplitude_dict)
             data_by_metrics.append(mean_frequency_dict)
             data_by_metrics.append(mean_rise_time_dict)
             data_by_metrics.append(mean_iei_dict)
             data_by_metrics.append(activity_dict)
+            data_by_metrics.append(mean_connectivity_dict)
 
         return (None if len(data_by_metrics) == 0 else data_by_metrics)
 
