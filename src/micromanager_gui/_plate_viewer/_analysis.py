@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+import matplotlib.pyplot as plt
 import numpy as np
 import tifffile
 import xlsxwriter
@@ -653,7 +654,7 @@ class _AnalyseCalciumTraces(QWidget):
         fitted_curve = top_exponential_decay[0]
         popts = top_exponential_decay[1]
 
-        phase_dict: dict[int, list[float]] | None = {}
+        phase_dict: dict[str, list[float]] | None = {}
 
         # perform photobleaching correction
         logger.info(f"Performing Bleaching Correction for Well {well}.")
@@ -700,7 +701,7 @@ class _AnalyseCalciumTraces(QWidget):
 
             phase = self._get_phase(total_frames, new_peaks)
             if phase is not None:
-                phase_dict[label_value] = phase
+                phase_dict[str(label_value)] = phase
             # max_slopes = self._get_max_slope(d_dff, new_peaks, start)
             rise_time = self._get_rise_time(d_dff,
                                             amplitudes,
@@ -754,8 +755,11 @@ class _AnalyseCalciumTraces(QWidget):
             )
             self._analysis_data[well][str(label_value)] = update
 
-        mean_global_connectivity = self._get_mean_connectivity(phase_dict)
+        mean_global_connectivity, connect_matrix = self._get_mean_connectivity(
+            phase_dict)
         self._analysis_data[well]["mean global connectivity"] = mean_global_connectivity
+        roi_labels = list(phase_dict.keys())
+        self._plot_connection(connect_matrix, roi_labels, well)
         # save json file
         logger.info("Saving JSON file for Well %s.", well)
         path = Path(self._output_path.value()) / f"{well}.json"
@@ -1235,7 +1239,7 @@ class _AnalyseCalciumTraces(QWidget):
 
         return phase
 
-    def _get_mean_connectivity(self, phase_dict: dict) -> float:
+    def _get_mean_connectivity(self, phase_dict: dict) -> tuple[float, np.ndarray]:
         """Calculate the average global connectivity."""
         connect_matrix = self._get_connect_matrix(phase_dict)
 
@@ -1248,7 +1252,26 @@ class _AnalyseCalciumTraces(QWidget):
         else:
             mean_connect = 'No calcium events detected'
 
-        return mean_connect
+        return mean_connect, connect_matrix
+
+    def _plot_connection(self, connect_matrix: np.ndarray,
+                         roi_labels: list[str], well: int) -> None:
+        """Plot the connection matrix."""
+        fig, ax = plt.subplots()
+        im = ax.imshow(connect_matrix)
+        ax.figure.colorbar(im, ax=ax)
+        # ax.set_xticks(range(connect_matrix.shape[1]), labels="Neuron ID")
+        # ax.set_yticks(range(connect_matrix.shape[0]), labels="Neuron ID")
+        # ax.spines[:].set_visible(False)
+        ax.set_xticks(range(connect_matrix.shape[1]), labels=roi_labels)
+        ax.set_yticks(range(connect_matrix.shape[0]), labels=roi_labels)
+        ax.set_xlabel("Neuron ID")
+        ax.set_ylabel("Neuron ID")
+        # ax.grid(which="minor", color="w", linestyle='-', linewidth=3)
+        # ax.tick_params(which="minor", bottom=False, left=False)
+
+        fig.savefig(Path(self._output_path.value()) / f"{well}_connection.png")
+        plt.close(fig)
 
     def _get_connect_matrix(self, phase_dict: dict) -> np.ndarray:
         """Calculate global connectivity."""
