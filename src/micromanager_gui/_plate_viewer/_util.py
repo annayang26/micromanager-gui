@@ -4,6 +4,8 @@ import contextlib
 from dataclasses import dataclass, replace
 from typing import Any, TypeVar
 
+import matplotlib.pyplot as plt
+import numpy as np
 from qtpy.QtCore import QElapsedTimer, QObject, Qt, QTimer, Signal
 from qtpy.QtWidgets import (
     QDialog,
@@ -13,6 +15,7 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from scipy.interpolate import CubicSpline
 
 # Define a type variable for the BaseClass
 T = TypeVar("T", bound="BaseClass")
@@ -22,6 +25,54 @@ GREEN = "#00FF00"
 GREY = "#808080"
 GENOTYPE_MAP = "genotype_plate_map.json"
 TREATMENT_MAP = "treatment_plate_map.json"
+COND1 = "condition_1"
+COND2 = "condition_2"
+
+# -----------------------------------GRAPH PLOTTING-----------------------------------
+# Anything added here will appear in the dropdown menu in the graph widget.
+# Modify the plot_traces function in _plot_methods.py to add the corresponding plotting
+# logic for the new options.
+
+RAW_TRACES = "Raw Traces"
+NORMALIZED_TRACES = "Normalized Traces [0, 1]"
+DFF = "DeltaF/F0"
+DFF_NORMALIZED = "DeltaF/F0 Normalized [0, 1]"
+DEC_DFF = "Deconvolved DeltaF/F0"
+DEC_DFF_WITH_PEAKS = "Deconvolved DeltaF/F0 with Peaks"
+DEC_DFF_NORMALIZED = "Deconvolved DeltaF/F0 Normalized [0, 1]"
+DEC_DFF_NORMALIZED_WITH_PEAKS = "Deconvolved DeltaF/F0 Normalized [0, 1] with Peaks"
+DEC_DFF_AMPLITUDE = "Deconvolved DeltaF/F0 Amplitudes"
+DEC_DFF_FREQUENCY = "Deconvolved DeltaF/F0 Frequencies"
+DEC_DFF_AMPLITUDE_VS_FREQUENCY = "Deconvolved DeltaF/F0 Amplitudes vs Frequencies"
+DEC_DFF_IEI = "Deconvolved DeltaF/F0 Inter-event Interval"
+
+DEC_DFF_AMPLITUDE_VS_FREQUENCY_ALL = "Deconvolved DeltaF/F0 Amplitudes vs Frequencies"
+DEC_DFF_AMPLITUDE_ALL = "Deconvolved DeltaF/F0 Amplitudes"
+DEC_DFF_FREQUENCY_ALL = "Deconvolved DeltaF/F0 Frequencies"
+DEC_DFF_IEI_ALL = "Deconvolved DeltaF/F0 Inter-event Interval"
+
+SINGLE_WELL_COMBO_OPTIONS = [
+    RAW_TRACES,
+    NORMALIZED_TRACES,
+    DFF,
+    DFF_NORMALIZED,
+    DEC_DFF,
+    DEC_DFF_WITH_PEAKS,
+    DEC_DFF_NORMALIZED,
+    DEC_DFF_NORMALIZED_WITH_PEAKS,
+    DEC_DFF_AMPLITUDE,
+    DEC_DFF_FREQUENCY,
+    DEC_DFF_AMPLITUDE_VS_FREQUENCY,
+    DEC_DFF_IEI,
+]
+
+MULTI_WELL_COMBO_OPTIONS = [
+    DEC_DFF_AMPLITUDE_VS_FREQUENCY_ALL,
+    DEC_DFF_AMPLITUDE_ALL,
+    DEC_DFF_FREQUENCY_ALL,
+    DEC_DFF_IEI_ALL,
+]
+# ------------------------------------------------------------------------------------
 
 
 @dataclass
@@ -62,6 +113,7 @@ class ROIData(BaseClass):
     dff: list[float] | None = None
     d_dff: list[float] | None = None
     frequency: float | None = None
+    activity: bool | None = None
     mean_amplitude: float | None = None
     mean_amplitude_stdev: float | None = None
     mean_rise_time: float | None = None
@@ -75,7 +127,24 @@ class ROIData(BaseClass):
     global_connectivity: float | None = None
     condition_1: str | None = None
     condition_2: str | None = None
+    cell_size: float | None = None
+    cell_size_units: str | None = None
+    total_recording_time_in_sec: float | None = None
+    active: bool | None = None
+    linear_phase: list[float] | None = None
+    cubic_phase: list[float] | None = None
+    iei: list[float] | None = None  # interevent interval
     # ... add whatever other data we need
+
+@dataclass
+class NetworkData(BaseClass):
+    """NamedTuple to store network data."""
+
+    network_label: int | None = None # network label
+    mean_connection_dist: float | None = None # average connection length
+    mean_connection_stdev: float | None = None
+    mean_connections_per_neuron: int | None = None # num of cells one neuron connects to
+    roi_label: list[int] | None = None # to store the label of cells in one cluster
 
 
 def show_error_dialog(parent: QWidget, message: str) -> None:
@@ -221,3 +290,183 @@ def parse_lineedit_text(input_str: str) -> list[int]:
             with contextlib.suppress(ValueError):
                 numbers.append(int(part))
     return numbers
+
+
+def calculate_dff(
+    data: np.ndarray, window: int = 100, percentile: int = 10, plot: bool = False
+) -> np.ndarray:
+    """Calculate the delta F/F using a sliding window and a percentile.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Array representing the fluorescence trace.
+    window : int
+        Size of the moving window for the background calculation. Default is 100.
+    percentile : int
+        Percentile to use for the background calculation. Default is 10.
+    plot : bool
+        Whether to show a plot of the background and trace. Default is False.
+
+    Returns
+    -------
+    np.ndarray
+        Array representing the delta F/F.
+    """
+    dff: np.ndarray = np.array([])
+    bg: np.ndarray = _calculate_bg(data, window, percentile)
+    dff = (data - bg) / bg
+    dff -= np.min(dff)
+
+    # plot background and trace
+    if plot:
+        plt.figure(figsize=(10, 8))
+        plt.plot(bg, label="background", color="black")
+        plt.plot(data, label="trace", color="green")
+        plt.legend()
+        plt.show()
+
+    return dff
+
+
+def _calculate_bg(data: np.ndarray, window: int, percentile: int = 10) -> np.ndarray:
+    """
+    Calculate the background using a moving window and a specified percentile.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Array representing the fluorescence trace.
+    window : int
+        Size of the moving window.
+    percentile : int
+        Percentile to use for the background calculation. Default is 10.
+
+    Returns
+    -------
+    np.ndarray
+        Array representing the background.
+    """
+    # Initialize background array
+    background: np.ndarray = np.zeros_like(data)
+
+    # Use the lower percentile (e.g., 10th percentile)
+    for y in range(len(data)):
+        x = max(0, y - window // 2)
+        lower_percentile = np.percentile(data[x : y + 1], percentile)
+        background[y] = lower_percentile
+
+    return background
+
+
+def get_linear_phase(frames: int, peaks: np.ndarray) -> list[float]:
+    """Calculate the linear phase progression."""
+    peaks_list = [int(peak) for peak in peaks]
+
+    if any(p < 0 or p >= frames for p in peaks):
+        raise ValueError("All peaks must be within the range of frames.")
+
+    if peaks_list[0] != 0:
+        peaks_list.insert(0, 0)
+    if peaks_list[-1] != (frames - 1):
+        peaks_list.append(frames - 1)
+
+    phase = [0.0] * frames
+
+    for k in range(len(peaks_list) - 1):
+        start, end = peaks_list[k], peaks_list[k + 1]
+
+        if start == end:
+            continue
+
+        for t in range(start, end):
+            phase[t] = (2 * np.pi) * ((t - start) / (end - start)) + (2 * np.pi * k)
+
+    phase[frames - 1] = 2 * np.pi * (len(peaks_list) - 1)
+
+    return phase
+
+
+def get_cubic_phase(total_frames: int, peaks: np.ndarray) -> list[float]:
+    """Calculate the instantaneous phase with smooth interpolation and handle negative values."""  # noqa: E501
+    peaks_list = [int(peak) for peak in peaks]
+
+    if peaks_list[0] != 0:
+        peaks_list.insert(0, 0)
+
+    if peaks_list[-1] != (total_frames - 1):
+        peaks_list.append(total_frames - 1)
+
+    num_cycles = len(peaks_list) - 1
+
+    peak_phases = np.arange(num_cycles + 1) * 2 * np.pi
+
+    cubic_spline = CubicSpline(peaks_list, peak_phases, bc_type="clamped")
+
+    frames = np.arange(total_frames)
+    phases = cubic_spline(frames)
+
+    phases = np.clip(phases, 0, None)
+    phases = np.mod(phases, 2 * np.pi)
+
+    return [float(phase) for phase in phases]
+
+
+def get_connectivity(phase_dict: dict[str, list[float]]) -> float | None:
+    """Calculate the connection matrix."""
+    connection_matrix = _get_connectivity_matrix(phase_dict)
+
+    if connection_matrix is None or connection_matrix.size == 0:
+        return None
+
+    # Ensure the matrix is at least 2x2 and square
+    if connection_matrix.shape[0] < 2 or (
+        connection_matrix.shape[0] != connection_matrix.shape[1]
+    ):
+        return None
+
+    return float(
+        np.median(np.sum(connection_matrix, axis=0) - 1)
+        / (connection_matrix.shape[0] - 1)
+    )
+
+
+def _get_connectivity_matrix(phase_dict: dict[str, list[float]]) -> np.ndarray | None:
+    """Calculate global connectivity using vectorized operations."""
+    active_rois = list(phase_dict.keys())  # ROI names
+
+    if len(active_rois) < 2:
+        return None
+
+    # Convert phase_dict values into a NumPy array of shape (N, T)
+    phase_array = np.array([phase_dict[roi] for roi in active_rois])  # Shape (N, T)
+
+    # Compute pairwise phase difference using broadcasting (Shape: (N, N, T))
+    phase_diff = np.expand_dims(phase_array, axis=1) - np.expand_dims(
+        phase_array, axis=0
+    )
+
+    # Ensure phase difference is within valid range [0, 2π]
+    phase_diff = np.mod(np.abs(phase_diff), 2 * np.pi)
+
+    # Compute cosine and sine of the phase differences
+    cos_mean = np.mean(np.cos(phase_diff), axis=2)  # Shape: (N, N)
+    sin_mean = np.mean(np.sin(phase_diff), axis=2)  # Shape: (N, N)
+
+    return np.array(np.sqrt(cos_mean**2 + sin_mean**2))
+
+
+def get_iei(peaks: list[int], elapsed_time_list: list[float]) -> list[float] | None:
+    """Calculate the interevent interval."""
+    # if less than 2 peaks or framerate is negative
+    if len(peaks) < 2 or len(elapsed_time_list) <= 1:
+        return None
+
+    peaks_time_stamps = [elapsed_time_list[i] for i in peaks]
+
+    # calculate the difference in time between two consecutive peaks
+    iei_ms = np.diff(np.array(peaks_time_stamps))
+
+    iei = [float(iei_peak / 1000) for iei_peak in iei_ms]  # convert from ms to s
+
+    return iei

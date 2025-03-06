@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+import matplotlib.pyplot as plt
 import numpy as np
 import tifffile
 import xlsxwriter
@@ -18,6 +19,9 @@ from oasis.functions import deconvolve
 from qtpy.QtCore import QSize, Signal
 from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
+    QComboBox,
+    QFileDialog,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -61,7 +65,7 @@ if TYPE_CHECKING:
     from ._plate_viewer import PlateViewer
 
 FIXED = QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
-
+R_SQUARE_THRESHOLD = 0.95
 
 logger = logging.getLogger("analysis_logger")
 logger.setLevel(logging.DEBUG)
@@ -76,6 +80,30 @@ logger.addHandler(file_handler)
 def single_exponential(x: np.ndarray, a: float, b: float, c: float) -> np.ndarray:
     return np.array(a * np.exp(-b * x) + c)
 
+def bi_exponential(
+    x: np.ndarray, a1: float, b1: float, a2: float, b2: float, c: float
+) -> np.ndarray:
+    """Bi-exponential decay function."""
+    return np.array(a1 * np.exp(-b1 * x) + a2 * np.exp(-b2 * x) + c)
+
+class _SelectStimulationPath(_BrowseWidget):
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        label: str = "Select path to the stimulated area",
+        tooltip: str = "Choose the path to the screenshot of the stimulated area.",
+    ) -> None:
+        super().__init__(parent, label, "", tooltip, is_dir=False)
+
+    def _on_browse(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Select the {self._label_text}.",
+            "",
+            "",
+        )
+        if path:
+            self._path.setText(path)
 
 class _AnalyseCalciumTraces(QWidget):
     progress_bar_updated = Signal()
@@ -104,6 +132,9 @@ class _AnalyseCalciumTraces(QWidget):
         self._cancelled: bool = False
 
         self._reanalyze: bool = False
+
+        self._browse_stimulated_area = _SelectStimulationPath(self)
+        self._browse_stimulated_area.hide()
 
         pos_wdg = QWidget(self)
         pos_wdg.setToolTip(
@@ -167,15 +198,29 @@ class _AnalyseCalciumTraces(QWidget):
 
         self.progress_bar_updated.connect(self._update_progress_bar)
 
+        activity_wdg = QWidget(self)
+        activity_wdg_layout = QHBoxLayout(activity_wdg)
+        activity_wdg_layout.setContentsMargins(0, 0, 0, 0)
+        activity_wdg_layout.setSpacing(5)
+        activity_combo_label = QLabel("Activity type: ")
+        activity_combo_label.setSizePolicy(*FIXED)
+        self._activity_combo = QComboBox()
+        self._activity_combo.addItems(['Spontaneous activity', 'Evoked activity'])
+        self._activity_combo.currentTextChanged.connect(self._on_activity_changed)
+        activity_wdg_layout.addWidget(activity_combo_label)
+        activity_wdg_layout.addWidget(self._activity_combo)
+
         self.groupbox = QGroupBox("Extract Traces", self)
         # self.groupbox.setCheckable(True)
         # self.groupbox.setChecked(False)
-        wdg_layout = QVBoxLayout(self.groupbox)
+        wdg_layout = QGridLayout(self.groupbox)
         wdg_layout.setContentsMargins(10, 10, 10, 10)
         wdg_layout.setSpacing(5)
-        wdg_layout.addWidget(self._output_path)
-        wdg_layout.addWidget(pos_wdg)
-        wdg_layout.addWidget(progress_wdg)
+        wdg_layout.addWidget(activity_wdg, 0, 0, 1, 2)
+        wdg_layout.addWidget(self._browse_stimulated_area, 1, 0, 1, 2)
+        wdg_layout.addWidget(self._output_path, 2, 0, 1, 2)
+        wdg_layout.addWidget(pos_wdg, 3, 0, 1, 2)
+        wdg_layout.addWidget(progress_wdg, 4, 0, 1, 2)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -206,6 +251,13 @@ class _AnalyseCalciumTraces(QWidget):
     def analysis_data(self) -> dict[str, dict[str, ROIData]]:
         return self._analysis_data
 
+    def _on_activity_changed(self, text: str) -> None:
+        """Show or hide the stimulated area path widget."""
+        if text == "Evoked activity":
+            self._browse_stimulated_area.show()
+        else:
+            self._browse_stimulated_area.hide()
+
     def closeEvent(self, event: QCloseEvent) -> None:
         """Override the close event to cancel the worker."""
         if self._worker is not None:
@@ -234,6 +286,9 @@ class _AnalyseCalciumTraces(QWidget):
         self._enable(False)
 
         self._reanalyze = False
+
+        if self._loaded_data():
+            self._analysis_data = self._plate_viewer._analysis_data
 
         self._worker = create_worker(
             self._extract_traces,
@@ -486,11 +541,14 @@ class _AnalyseCalciumTraces(QWidget):
         data, meta = self._data.isel(p=p, metadata=True)
 
         # get position name from metadata
-        well = meta[0].get("Event", {}).get("pos_name", f"pos_{str(p).zfill(4)}")
+        event_key = "mda_event" if "mda_event" in meta[0] else "Event"
+        well = meta[0].get(event_key, {}).get("pos_name", f"pos_{str(p).zfill(4)}")
+        exposure = float(meta[0].get(event_key).get('exposure'))
+        framerate = 1 / exposure
 
         total_frames = data.shape[0]
-        binning, magnification, pixel_size, objective,\
-            exposure, framerate = self._extract_metadata(meta) # exposure time in ms
+        # binning, magnification, pixel_size, objective,\
+        #     exposure, framerate = self._extract_metadata(meta) # exposure time in ms
         framerate *= 1000 # seconds
         recording_time = total_frames/framerate # in seconds
 
@@ -516,19 +574,15 @@ class _AnalyseCalciumTraces(QWidget):
 
         logger.info("Processing well %s", well)
 
-        # temporary storage for trace to use for photobleaching correction
-        # fitted_curves: list[tuple[list[float], list[float], float]] = []
-
         roi_trace: np.ndarray | list[float] | None
-        roi_size_um: float | None
+        roi_size: float | None
+        small_rois: list[int] = []
 
+        # average_trace = cast(np.ndarray, data.mean(axis=(1, 2)))
+        # avg_exponential_decay = self._get_single_exponential_decay(average_trace)
 
-        # if using the top fitted curve
-        # top_fitted_curves: tuple[list[float], list[float], float] = [None, None, 0]
-        average_trace = cast(np.ndarray, data.mean(axis=(1, 2)))
-        path = Path(self._output_path.value()) / f"failed_fitted_curve_{well}.jpg"
-        # if using average trace of the entire FOV
-        exponential_decay = self._get_exponential_decay(average_trace, path=path)
+        # temporary storage for trace to use for photobleaching correction
+        top_exponential_decay = (None, None, 0)
 
         # extract roi traces
         logger.info(f"Extracting Traces from Well {well}.")
@@ -545,17 +599,26 @@ class _AnalyseCalciumTraces(QWidget):
             roi_trace = cast(np.ndarray, masked_data.mean(axis=1))
 
             # if choosing the top fitted curve
-            # exponential_decay = self._get_exponential_decay(roi_trace, path)
-            # if exponential_decay is not None:
-            #     r_squared = exponential_decay[1]
-            #     top_r_sqaured = top_fitted_curves[1]
-            #     if r_squared > top_r_sqaured:
-                    # top_fitted_curves = exponential_decay
+            # roi_exponential_decay = self._get_exponential_decay(roi_trace, 0.95)
+            # if roi_exponential_decay and roi_exponential_decay[0] is not None:
+            #     top_exponential_decay = max(roi_exponential_decay,
+            #                                 top_exponential_decay,
+            #                                 key=lambda x: x[2])
+            mask_exp_decay, msg = self._get_best_exponential_decay(roi_trace)
 
+            if mask_exp_decay[2] is not None:
+                top_exponential_decay = max(mask_exp_decay, top_exponential_decay,
+                                            key=lambda x: x[2])
             # compute the area of the masksed cells
             roi_size_pixel = masked_data.shape[1]
-            roi_size_um = self._cell_size_in_um(roi_size_pixel, binning, pixel_size,
-                                                objective, magnification)
+            # roi_size_um = self._cell_size_in_um(roi_size_pixel, binning, pixel_size,
+            #                                     objective, magnification)
+            px_size = meta[0].get("PixelSizeUm", None)
+            roi_size = roi_size_pixel * px_size if px_size else roi_size_pixel
+
+            if roi_size < 10:
+                small_rois.append(label_value)
+                continue
 
             condition_1 = condition_2 = None
             if self._plate_map_data:
@@ -568,20 +631,30 @@ class _AnalyseCalciumTraces(QWidget):
             # store the analysis data
             self._analysis_data[well][str(label_value)] = ROIData(
                 raw_trace=roi_trace.tolist(),
-                use_for_bleach_correction=exponential_decay,
-                cell_size=roi_size_um,
+                # use_for_bleach_correction=exponential_decay,
+                cell_size=roi_size,
                 condition_1=condition_1,
                 condition_2=condition_2,
             )
 
-
         # average the fitted curves
         logger.info(f"Averaging the fitted curves well {well}.")
-        average_fitted_curve = exponential_decay[0]
-        popts = exponential_decay[1]
-        # average_fitted_curve = top_fitted_curves[0]
-        # popts = top_fitted_curves[1]
+        # avg_r_squared = top_exponential_decay[2] if (top_exponential_decay and
+        #     top_exponential_decay[0] is not None) else 0
+        # top_r_squared = top_exponential_decay[2] if (top_exponential_decay and
+        #     top_exponential_decay[0] is not None) else 0
+        # exponential_decay = top_exponential_decay
 
+        # i = 1
+        # while exponential_decay is None and exponential_decay[0] is None:
+        #     exponential_decay = self._get_exponential_decay(average_trace, 0.98-i*0.01)
+        #     i += 1
+
+        #TODO: debug after this; seems like the photobleaching step is causing the bug
+        fitted_curve = top_exponential_decay[0]
+        popts = top_exponential_decay[1]
+
+        phase_dict: dict[str, list[float]] | None = {}
 
         # perform photobleaching correction
         logger.info(f"Performing Bleaching Correction for Well {well}.")
@@ -591,16 +664,20 @@ class _AnalyseCalciumTraces(QWidget):
             if self._check_for_abort_requested():
                 break
 
+            if label_value in small_rois:
+                continue
+
             data = self._analysis_data[well][str(label_value)] # for one ROI
 
             roi_trace = data.raw_trace
+            active: bool = True
 
             if roi_trace is None:
                 continue
 
             # calculate the bleach corrected trace
             bleach_corrected = (
-                np.array(roi_trace) - average_fitted_curve + popts[2]
+                np.array(roi_trace) - fitted_curve + popts[-1]
             )
 
             # calculate the dF/F TODO: how to calculate F0?
@@ -612,24 +689,34 @@ class _AnalyseCalciumTraces(QWidget):
             prominence = np.mean(d_dff) * 0.2
             # find the peaks in the bleach corrected trace
             peaks = self._find_peaks(d_dff, prominence=prominence) # for one ROI
+
             if len(peaks) < 2:
                 continue
 
             # Peaks
             amplitudes, start, end, new_peaks = self._get_amplitude(d_dff, peaks)
-            # max_slopes = self._get_max_slope(d_dff, new_peaks, start)
-            rise_time = self._get_rise_time(d_dff, amplitudes, new_peaks, start, framerate)
-            decay_time = self._get_decay_time(new_peaks, end, framerate)
 
+            if new_peaks is None or len(new_peaks) < 2:
+                continue
+
+            phase = self._get_phase(total_frames, new_peaks)
+            if phase is not None:
+                phase_dict[str(label_value)] = phase
+            # max_slopes = self._get_max_slope(d_dff, new_peaks, start)
+            rise_time = self._get_rise_time(d_dff,
+                                            amplitudes,
+                                            new_peaks,
+                                            start,
+                                            framerate)
+            decay_time = self._get_decay_time(new_peaks, end, framerate)
+            # print("roi data")
             #ROIData
             iei = self._get_iei(new_peaks, framerate)
-            mean_iei = mean_iei_stdev = None
-            if iei:
-                mean_iei = np.mean(iei)
-                mean_iei_stdev = np.std(iei)
+            mean_iei = np.mean(iei)
+            mean_iei_stdev = np.std(iei)
             mean_amplitude = np.mean(amplitudes)
             mean_amplitude_stdev = np.std(amplitudes)
-            frequency = len(peaks) / (recording_time) # events per second
+            frequency = len(new_peaks) / (recording_time) # events per second
             mean_rise_time = np.mean(rise_time)
             mean_rise_time_stdev = np.std(rise_time)
             mean_decay_time = np.mean(decay_time)
@@ -638,7 +725,8 @@ class _AnalyseCalciumTraces(QWidget):
             # mean_max_slope_stdev = np.std(max_slopes)
             # store the analysis data
             update = data.replace(
-                average_photobleaching_fitted_curve=average_fitted_curve,
+                average_photobleaching_fitted_curve=fitted_curve,
+                use_for_bleach_correction=top_exponential_decay,
                 average_popts=popts,
                 bleach_corrected_trace=bleach_corrected.tolist(),
                 peaks=[Peaks(peak=new_peaks[i],
@@ -652,6 +740,7 @@ class _AnalyseCalciumTraces(QWidget):
                 mean_amplitude=mean_amplitude,
                 mean_amplitude_stdev=mean_amplitude_stdev,
                 frequency=frequency,
+                activity=active,
                 mean_rise_time=mean_rise_time,
                 mean_rise_time_stdev=mean_rise_time_stdev,
                 mean_decay_time=mean_decay_time,
@@ -661,10 +750,16 @@ class _AnalyseCalciumTraces(QWidget):
                 # mean_max_slope=mean_max_slope,
                 # mean_max_slope_stdev=mean_max_slope_stdev,
                 dff=dff.tolist(),
-                d_dff=d_dff.tolist()
+                d_dff=d_dff.tolist(),
+                phase=phase
             )
             self._analysis_data[well][str(label_value)] = update
 
+        mean_global_connectivity, connect_matrix = self._get_mean_connectivity(
+            phase_dict)
+        self._analysis_data[well]["mean global connectivity"] = mean_global_connectivity
+        roi_labels = list(phase_dict.keys())
+        self._plot_connection(connect_matrix, roi_labels, well)
         # save json file
         logger.info("Saving JSON file for Well %s.", well)
         path = Path(self._output_path.value()) / f"{well}.json"
@@ -679,7 +774,7 @@ class _AnalyseCalciumTraces(QWidget):
         # update the progress bar
         self.progress_bar_updated.emit()
 
-    def calculate_dff(self, pc_trace):
+    def calculate_dff(self, pc_trace) -> np.ndarray:
         dff = []
         bg, median = self._calculate_bg(pc_trace, 100)
         bg = list(bg)
@@ -711,10 +806,9 @@ class _AnalyseCalciumTraces(QWidget):
             (smoothed - np.min(smoothed)) / (np.max(smoothed) - np.min(smoothed)),
         )
 
-    def _get_exponential_decay(
-        self, trace: np.ndarray,
-        path: str = ""
-    ) -> tuple[list[float], list[float], float] | None:
+    def _get_single_exponential_decay(
+        self, trace: np.ndarray
+    ) -> tuple[list[float], list[float], float]:
         """Fit an exponential decay to the trace.
 
         Returns None if the R squared value is less than 0.9.
@@ -731,27 +825,96 @@ class _AnalyseCalciumTraces(QWidget):
             ss_total = np.sum((trace - np.mean(trace)) ** 2)
             ss_res = np.sum(residuals**2)
             r_squared = 1 - (ss_res / ss_total)
-            if r_squared <= 0.98:
-                import matplotlib.pyplot as plt
-                plt.plot(fitted_curve, 'black', '--')
-                plt.plot(trace, 'blue')
-                plt.savefig(path)
         except Exception as e:
             logger.error("Error fitting curve: %s", e)
-            return None
-
-        # return (fitted_curve.tolist(), popt.tolist(), float(r_squared))
+            return (None, None, None)
 
         return (
-            None
-            if r_squared <= 0.98
+            (None, None, None)
+            if r_squared <= R_SQUARE_THRESHOLD
             else (fitted_curve.tolist(), popt.tolist(), float(r_squared))
         )
+
+    def _get_bi_exponential_decay(
+        self, trace: np.ndarray
+    ) -> tuple[list[float], list[float], float] | None:
+        """Fit a bi-exponential decay to the trace.
+
+        Returns None if the R squared value is less than 0.96.
+        """
+        time_points = np.arange(len(trace))
+        scaled_time = time_points / np.max(time_points)  # Normalize `x` to [0, 1]
+
+        # Initial guess for the parameters: [a1, b1, a2, b2, c]
+        initial_guess = [max(trace) / 2, 1.0, max(trace) / 2, 1.0, min(trace)]
+        bounds = (
+            [0, 0, 0, 0, -np.inf],
+            [np.inf, 10, np.inf, 10, np.inf],
+        )  # Parameter bounds
+
+        try:
+            popt, _ = curve_fit(
+                bi_exponential,
+                scaled_time,
+                trace,
+                p0=initial_guess,
+                bounds=bounds,
+                maxfev=5000,
+            )
+            fitted_curve = bi_exponential(scaled_time, *popt)
+            residuals = trace - fitted_curve
+            ss_total = np.sum((trace - np.mean(trace)) ** 2)
+            ss_res = np.sum(residuals**2)
+            r_squared = 1 - (ss_res / ss_total)
+        except Exception as e:
+            print(f"Error fitting bi-exponential curve: {e}")
+            return (None, None, None)
+
+        # Return None if the R² is less than R_SQUARE_THRESHOLD
+        return (
+            (None, None, None)
+            if r_squared <= R_SQUARE_THRESHOLD
+            else (fitted_curve.tolist(), popt.tolist(), float(r_squared))
+        )
+
+    def _get_best_exponential_decay(
+            self, trace: np.ndarray
+            ) -> tuple[list[float], list[float], float, str] | None:
+
+        best_popts = (None, None, None)
+
+        average_popts_exp = self._get_single_exponential_decay(trace)
+        average_popts_biexp = self._get_bi_exponential_decay(trace)
+
+        if average_popts_exp[2] is None and average_popts_biexp[2] is None:
+            msg = "No curve was fitted"
+
+        elif average_popts_exp[2] is None and average_popts_biexp[2] is not None:
+            best_popts = average_popts_biexp
+            msg = "single exponential decay"
+
+        elif average_popts_exp[2] is not None and average_popts_biexp[2] is None:
+            best_popts = average_popts_exp
+            msg = "bi-exponential decay"
+
+        elif average_popts_exp[2] is not None and average_popts_biexp[2] is not None:
+            _, _, r_squared_exp = average_popts_exp
+            _, _, r_squared_biexp = average_popts_biexp
+
+            if r_squared_exp >= r_squared_biexp:
+                best_popts = average_popts_exp
+                msg = "single exponential decay"
+            else:
+                best_popts = average_popts_biexp
+                msg = "bi-exponential decay"
+
+        return best_popts, msg
 
     def _find_peaks(
         self, trace: np.ndarray, prominence: float | None = None
     ) -> list[int]:
         """Smooth the trace and find the peaks."""
+        # TODO: remove the smooth and normalize here?
         smoothed_normalized = self._smooth_and_normalize(trace)
         peaks, _ = find_peaks(smoothed_normalized, width=3, prominence=prominence)
         peaks = cast(np.ndarray, peaks)
@@ -808,7 +971,9 @@ class _AnalyseCalciumTraces(QWidget):
                             under_thresh_count = 0
 
                         # stop searching for starting index
-                        if under_thresh_count >= reset_num or start_index == 0 or total_count == total_dist:
+                        if (under_thresh_count >= reset_num or
+                            start_index == 0 or
+                            total_count == total_dist):
                             searching = False
 
                 # Search for ending index for current spike
@@ -843,7 +1008,8 @@ class _AnalyseCalciumTraces(QWidget):
                             under_thresh_count = 0
 
                         # NOTE: changed the operator from == to >=
-                        if under_thresh_count >= reset_num or end_index == (len(dff_deriv) - 1) or \
+                        if under_thresh_count >= reset_num or end_index == (
+                            len(dff_deriv) - 1) or \
                                 total_count == total_dist:
                             searching = False
 
@@ -856,7 +1022,8 @@ class _AnalyseCalciumTraces(QWidget):
                 # print(f"        start to spk: {start_to_spk}")
 
 
-                f_start_index = int(peaks[i] -(len(start_to_spk) - (np.argmin(start_to_spk) + 1)))
+                f_start_index = int(peaks[i] -(len(start_to_spk) - (
+                    np.argmin(start_to_spk) + 1)))
                 f_end_index = int(peaks[i] + np.argmin(spk_to_end))
                 amplitude = dff[peaks[i]]-dff[f_start_index]
                 # print(f"    start_index: {f_start_index} of {dff[f_start_index]}")
@@ -869,9 +1036,6 @@ class _AnalyseCalciumTraces(QWidget):
                     amplitudes.append(amplitude)
                 else:
                     remove_peaks.append(peaks[i])
-                    # print(f"            REMOVING {peaks[i]} because the amplitude is {amplitude}")
-
-                # print(f"        amplitude: {amplitudes[-1]} from {start_indices[-1]} to {end_indices[-1]}")
 
         new_peaks = [peak for peak in peaks if (peak not in remove_peaks)]
 
@@ -885,78 +1049,91 @@ class _AnalyseCalciumTraces(QWidget):
         amplitudes = []
         start_indices = []
         end_indices = []
-        remove_peaks = []
+        new_peaks = []
 
-        if peaks:
-            dff_deriv = np.diff(dff)
-            len_dff_deriv = len(dff_deriv)
+        if len(peaks) < 2:
+            return
 
-            for peak in peaks:
-                start_index = peak
-                end_index = peak
-                under_thresh_count = 0
-                total_count = 0
+        dff_deriv = np.diff(dff)
+        len_dff_deriv = len(dff_deriv)
 
-                if start_index > 0:
-                    while start_index > 0 and total_count < total_dist:
-                        start_index -= 1
-                        total_count += 1
-                        if start_index in peaks:
-                            negative_count = 0
-                            while start_index < len_dff_deriv and\
-                                  dff_deriv[start_index] < 0 and\
-                                      negative_count < neg_reset_num:
-                                start_index += 1
-                                if dff_deriv[start_index] < 0:
-                                    negative_count += 1
-                                else:
-                                    negative_count = 0
-                            break
-                        if dff_deriv[start_index] < deriv_threshold:
-                            under_thresh_count += 1
-                        else:
-                            under_thresh_count = 0
-                        if under_thresh_count >= reset_num:
-                            break
+        for peak in peaks:
+            start_index = peak
+            end_index = peak
+            under_thresh_count = 0
+            total_count = 0
 
-                under_thresh_count = 0
-                total_count = 0
+            if start_index >= 0:
+                while (start_index >= 0
+                       and total_count < total_dist):
+                    start_index -= 1
+                    total_count += 1
+                    if start_index in peaks:
+                        negative_count = 0
+                        while start_index < len_dff_deriv and\
+                                dff_deriv[start_index] < 0 and\
+                                    negative_count < neg_reset_num:
+                            start_index += 1
+                            if dff_deriv[start_index] < 0:
+                                negative_count += 1
+                            else:
+                                negative_count = 0
+                        break
+                    if dff_deriv[start_index] < deriv_threshold:
+                        under_thresh_count += 1
+                    else:
+                        under_thresh_count = 0
+                    if under_thresh_count >= reset_num:
+                        break
 
-                if end_index < len_dff_deriv - 1:
-                    while end_index < len_dff_deriv - 1 and total_count < total_dist:
-                        end_index += 1
-                        total_count += 1
-                        if end_index in peaks:
-                            negative_count = 0
-                            while end_index >= 0 and dff_deriv[end_index] > 0 and negative_count < neg_reset_num:
-                                end_index -= 1
-                                if dff_deriv[end_index] > 0:
-                                    negative_count += 1
-                                else:
-                                    negative_count = 0
-                            break
-                        if dff_deriv[end_index] < deriv_threshold:
-                            under_thresh_count += 1
-                        else:
-                            under_thresh_count = 0
-                        if under_thresh_count >= reset_num:
-                            break
+            under_thresh_count = 0
+            total_count = 0
 
-                spk_to_end = dff[peak:(end_index + 1)]
-                start_to_spk = dff[start_index:peak]
-                f_start_index = int(peak - (len(start_to_spk) -
-                                            (np.argmin(start_to_spk) + 1)))
-                f_end_index = int(peak + np.argmin(spk_to_end))
-                amplitude = dff[peak] - dff[f_start_index]
+            if end_index < len_dff_deriv - 1:
+                while (end_index < len_dff_deriv - 1
+                       and total_count < total_dist):
+                    end_index += 1
+                    total_count += 1
+                    if end_index in peaks:
+                        negative_count = 0
+                        while (end_index >= peak
+                                and dff_deriv[end_index] > 0
+                                and negative_count < neg_reset_num):
+                            end_index -= 1
+                            if dff_deriv[end_index] > 0:
+                                negative_count += 1
+                            else:
+                                negative_count = 0
+                        break
+                    if dff_deriv[end_index] < deriv_threshold:
+                        under_thresh_count += 1
+                    else:
+                        under_thresh_count = 0
+                    if under_thresh_count >= reset_num:
+                        break
 
-                if amplitude > 0:
-                    start_indices.append(f_start_index)
-                    end_indices.append(f_end_index)
-                    amplitudes.append(amplitude)
-                else:
-                    remove_peaks.append(peak)
+            spk_to_end = dff[peak:(end_index + 1)]
+            start_to_spk = dff[start_index:peak]
+            amplitude = 0
 
-        new_peaks = [peak for peak in peaks if peak not in remove_peaks]
+            if len(spk_to_end) < min_dist or len(start_to_spk) < min_dist:
+                continue
+
+            f_start_index = int(peak - (len(start_to_spk) -
+                                        np.argmin(start_to_spk)))
+            f_end_index = int(peak + np.argmin(spk_to_end))
+
+            if (peak-f_start_index < min_dist
+                or f_end_index - peak < min_dist):
+                continue
+
+            amplitude = dff[peak] - dff[f_start_index]
+
+            if amplitude > 0:
+                start_indices.append(f_start_index)
+                end_indices.append(f_end_index)
+                amplitudes.append(amplitude)
+                new_peaks.append(peak)
 
         return amplitudes, start_indices, end_indices, new_peaks
 
@@ -991,12 +1168,10 @@ class _AnalyseCalciumTraces(QWidget):
     # IEI: peak to peak
     def _get_iei(self, peaks: list[int], framerate: float) -> list[float]:
         """Calculate the interevent interval."""
-        iei = []
-        if len(peaks) > 0:
-            iei_frames = np.diff(np.array(peaks))
-            iei.append(iei_frames/framerate) #s
+        iei_frames = np.diff(np.array(peaks))
+        iei = cast(list, iei_frames/framerate) #s
 
-        return (None if len(iei) == 0 else iei)
+        return iei
 
     # NOTE: raise time here is from base to peak;
     # FluoroSNNAP uses from base to max_slope point
@@ -1005,14 +1180,31 @@ class _AnalyseCalciumTraces(QWidget):
         """Get Raise Time for each peak."""
         rise_time = []
 
+        if not (len(amplitude) == len(peaks) == len(start)):
+            raise ValueError("The length of amplitude,\
+                             peaks, and start lists must be equal.")
+
         # NOTE: time to reach half of amplitude
         for amp, peak, s in zip(amplitude, peaks, start):
-            limit_range = int((peak + 1 - s)/5)
-            rise_range = dff[s+limit_range:(peak+1)-limit_range]
-            half_amp = amp/2 + rise_range[0]
-            half_amp_idx = np.argmin([abs(signal - half_amp) for signal in rise_range])
-            rise_time.append((limit_range+half_amp_idx)/framerate) #s
-        # rise_time = [((peaks[i] - start[i] + 1)/framerate) for i in range(len(peaks))]
+            try:
+                limit_range = int((peak + 1 - s)/3)
+                if s + limit_range >= peak - limit_range:
+                    print(f"Invalid range for peak {peak}, start {s}")
+                    rise_time.append(np.nan)
+                    continue
+
+                rise_range = dff[s+limit_range:(peak+1)-limit_range]
+                if len(rise_range) == 0:
+                    print(f"Rise range is empty for peak {peak}, start {s}")
+                    rise_time.append(np.nan)
+                    continue
+
+                half_amp = amp/2 + dff[s]
+                half_amp_idx = np.argmin(
+                    [abs(signal - half_amp) for signal in rise_range])
+                rise_time.append((limit_range+half_amp_idx)/framerate) #s
+            except Exception as e:
+                print(f'error in rise time calculation {e}', )
 
         return rise_time
 
@@ -1023,10 +1215,94 @@ class _AnalyseCalciumTraces(QWidget):
 
         return decay_time
 
+    def _get_phase(self, total_frames: int, peaks: list[int]) -> list[float] | None:
+        """Calculate the instantaneous phase."""
+        peaks_copy = peaks.copy()
+        if len(peaks_copy) == 0:
+            return None
+        if peaks_copy[0] != 0:
+            peaks_copy.insert(0, 0)
+        if peaks_copy[-1] != (total_frames - 1):
+            peaks_copy.append(total_frames - 1)
+
+        phase = []
+        for k in range(len(peaks_copy)-1):
+            t = peaks_copy[k]
+
+            while t < peaks_copy[k+1]:
+                instant_phase = (2 * np.pi) * ((t - peaks_copy[k])/\
+                                               (peaks_copy[k+1] - peaks_copy[k])) + \
+                                               (2 * np.pi * k)
+                phase.append(instant_phase)
+                t += 1
+        phase.append(2 * np.pi * (len(peaks_copy) - 1))
+
+        return phase
+
+    def _get_mean_connectivity(self, phase_dict: dict) -> tuple[float, np.ndarray]:
+        """Calculate the average global connectivity."""
+        connect_matrix = self._get_connect_matrix(phase_dict)
+
+        if connect_matrix is not None:
+            if len(connect_matrix) > 1:
+                mean_connect = np.median(np.sum(connect_matrix, axis=0) - 1) /\
+                    (len(connect_matrix) - 1)
+            else:
+                mean_connect = 'N/A - Only one active ROI'
+        else:
+            mean_connect = 'No calcium events detected'
+
+        return mean_connect, connect_matrix
+
+    def _plot_connection(self, connect_matrix: np.ndarray,
+                         roi_labels: list[str], well: int) -> None:
+        """Plot the connection matrix."""
+        fig, ax = plt.subplots()
+        im = ax.imshow(connect_matrix)
+        ax.figure.colorbar(im, ax=ax)
+        # ax.set_xticks(range(connect_matrix.shape[1]), labels="Neuron ID")
+        # ax.set_yticks(range(connect_matrix.shape[0]), labels="Neuron ID")
+        # ax.spines[:].set_visible(False)
+        ax.set_xticks(range(connect_matrix.shape[1]), labels=roi_labels)
+        ax.set_yticks(range(connect_matrix.shape[0]), labels=roi_labels)
+        ax.set_xlabel("Neuron ID")
+        ax.set_ylabel("Neuron ID")
+        # ax.grid(which="minor", color="w", linestyle='-', linewidth=3)
+        # ax.tick_params(which="minor", bottom=False, left=False)
+
+        fig.savefig(Path(self._output_path.value()) / f"{well}_connection.png")
+        plt.close(fig)
+
+    def _get_connect_matrix(self, phase_dict: dict) -> np.ndarray:
+        """Calculate global connectivity."""
+        def _get_sync_index(phase1: list[float], phase2: list[float]):
+            def _get_phase_diff(phase1: list[float], phase2: list[float]):
+                x_phase = np.array(phase1)
+                y_phase = np.array(phase2)
+                phase_diff = np.mod(np.abs(x_phase - y_phase), (2 * np.pi))
+
+                return phase_diff
+
+            phase_diff = _get_phase_diff(phase1, phase2)
+            sync_index = np.sqrt((np.mean(np.cos(phase_diff)) ** 2) + \
+                                 (np.mean(np.sin(phase_diff)) ** 2))
+
+            return sync_index
+
+        active_rois = list(phase_dict.keys())
+        connect_matrix = np.zeros((len(active_rois), len(active_rois)))
+        for i, r1 in enumerate(active_rois):
+            for j, r2 in enumerate(active_rois):
+                connect_matrix[i, j] = _get_sync_index(phase_dict[r1],
+                                                            phase_dict[r2])
+
+        return connect_matrix
+
     def _extract_metadata(self, meta: list[dict]) -> tuple[float]:
         """Extract information from metadata."""
         binning = int(meta[0].get('pco_camera-Binning'))
-        magnification = float(meta[0].get('IntermediateMagnification-Magnification')[:-1])
+        magnification = float(meta[0].get(
+            'IntermediateMagnification-Magnification')[:-1])
         pixel_size = float(meta[0].get('PixelSizeUm'))
         objective = int(meta[0].get('Nosepiece-Label').split(' ')[-1][:-1])
         exposure = float(meta[0].get('Event').get('exposure'))
@@ -1040,7 +1316,8 @@ class _AnalyseCalciumTraces(QWidget):
         exp_name = Path(self._output_path.value()).parent.name
 
         readout_list = ['Average Cell Size', 'Average Amplitude', 'Average Frequency',
-                        'Average Rise Time', 'Average IEI']
+                        'Average Rise Time', 'Average IEI', "Percentage Active",
+                        "Global Connectivity"]
 
         compiled_data_list = self._compile_readout_data()
         compiled_cond = self._compile_conditions()
@@ -1048,14 +1325,16 @@ class _AnalyseCalciumTraces(QWidget):
         if compiled_data_list:
             for readout, readout_data in zip(readout_list, compiled_data_list):
                 file_path = Path(self._output_path.value())/f"{exp_name}_{readout}.xlsx"
-                with xlsxwriter.Workbook(file_path, {'nan_inf_to_errors': True}) as wkbk:
+                with xlsxwriter.Workbook(file_path, {'nan_inf_to_errors':True}) as wkbk:
                     wkst = wkbk.add_worksheet(readout)
+                    num_format = wkbk.add_format({'num_format': '0.00'})
                     wkst.write(0, 0, readout)
 
-                    # write conditions
-                    for i, condition in enumerate(compiled_cond):
-                        for repeat in range(col_per_treatment):
-                            wkst.write(0, i*col_per_treatment+repeat+1, condition)
+                    if len(compiled_cond) > 1:
+                        # write conditions
+                        for i, condition in enumerate(compiled_cond):
+                            for repeat in range(col_per_treatment):
+                                wkst.write(0, i*col_per_treatment+repeat+1, condition)
 
                     # write genotypes
                     for i, genotype in enumerate(compiled_geno):
@@ -1080,11 +1359,19 @@ class _AnalyseCalciumTraces(QWidget):
                                     row = 5
 
                                 if i < len(data_list):
-                                    entry = float(data_list[i])
+                                    entry = data_list[i]
+                                    if entry == 'N/A':
+                                        wkst.write(row,
+                                                   start*col_per_treatment+i+1,
+                                                   entry)
+                                    else:
+                                        wkst.write_number(row,
+                                                        start*col_per_treatment+i+1,
+                                                        float(entry),
+                                                        num_format)
                                 else:
                                     entry = 'N/A'
-                                # print(f'    cond: {cond}, row: {row}, col:{start*col_per_treatment+i+1}, entry: {entry}')
-                                wkst.write(row, start*col_per_treatment+i+1, entry)
+                                    wkst.write(row, start*col_per_treatment+i+1, entry)
 
         else:
             logger.info("No data were found. Please check the plate map and data!")
@@ -1097,6 +1384,8 @@ class _AnalyseCalciumTraces(QWidget):
         # mean_max_slope_dict = {}
         mean_rise_time_dict = {}
         mean_iei_dict = {}
+        activity_dict = {}
+        mean_connectivity_dict = {}
 
         data_to_compile = self.analysis_data
         if self._loaded_data():
@@ -1109,20 +1398,43 @@ class _AnalyseCalciumTraces(QWidget):
                 if well in plate_map_keys:
                     genotype = self._plate_map_data[well].get("condition_1")
                     treatment = self._plate_map_data[well].get("condition_2")
+                    amplitude_list = []
+                    cell_size_list = []
+                    frequency_list = []
+                    iei_list = []
+                    rise_time_list = []
+                    active_cells: int = 0
+                    mean_global_connectivity = fov_dict.get(
+                        "mean global connectivity")
 
-                    amplitude_list = [roiData.mean_amplitude for roiData in fov_dict.values()]
-                    cell_size_list = [roiData.cell_size for roiData in fov_dict.values()]
-                    frequency_list = [roiData.frequency for roiData in fov_dict.values()]
-                    # max_slope_list = [roiData.mean_max_slope for roiData in fov_dict.values()]
-                    iei_list = [roiData.mean_iei for roiData in fov_dict.values()]
-                    rise_time_list = [roiData.mean_rise_time for roiData in fov_dict.values()]
+                    for roiData in fov_dict.values():
+                        if isinstance(roiData, ROIData) and roiData.activity:
+                            cell_size_list.append(roiData.cell_size)
+                            amplitude_list.append(roiData.mean_amplitude)
+                            frequency_list.append(roiData.frequency)
+                            iei_list.append(roiData.mean_iei)
+                            rise_time_list.append(roiData.mean_rise_time)
+                            active_cells += 1
 
-                    mean_amplitude_fov = np.nanmean(amplitude_list, dtype=np.float64)
-                    mean_cell_size_fov = np.nanmean(cell_size_list, dtype=np.float64)
-                    mean_frequency_fov = np.nanmean(frequency_list, dtype=np.float64)
+                    mean_amplitude_fov = np.nanmean(amplitude_list, dtype=np.float64
+                                                    ) if (len(amplitude_list)>0
+                                                          ) else 'N/A'
+                    mean_cell_size_fov = np.nanmean(cell_size_list, dtype=np.float64
+                                                    ) if (len(cell_size_list)>0
+                                                          ) else 'N/A'
+                    mean_frequency_fov = np.nanmean(frequency_list, dtype=np.float64
+                                                    ) if (len(frequency_list)>0
+                                                          ) else 'N/A'
                     # mean_max_slope_fov = np.mean(max_slope_list)
-                    mean_iei_fov = np.nanmean(iei_list, dtype=np.float64)
-                    mean_rise_time_fov = np.nanmean(rise_time_list, dtype=np.float64)
+                    mean_iei_fov = np.nanmean(iei_list, dtype=np.float64
+                                                    ) if (len(iei_list)>0
+                                                          ) else 'N/A'
+                    mean_rise_time_fov = np.nanmean(rise_time_list, dtype=np.float64
+                                                    ) if (len(rise_time_list)>0
+                                                          ) else 'N/A'
+                    pctg_active = active_cells / len(list(fov_dict.keys())) * 100 if (
+                                                    len(cell_size_list)>0
+                                                          ) else 'N/A'
 
                     if genotype not in mean_amplitude_dict:
                         mean_amplitude_dict[genotype] = {}
@@ -1154,11 +1466,25 @@ class _AnalyseCalciumTraces(QWidget):
                         mean_rise_time_dict[genotype][treatment] = []
                     mean_rise_time_dict[genotype][treatment].append(mean_rise_time_fov)
 
+                    if genotype not in activity_dict:
+                        activity_dict[genotype] = {}
+                    if treatment not in activity_dict[genotype]:
+                        activity_dict[genotype][treatment] = []
+                    activity_dict[genotype][treatment].append(pctg_active)
+
+                    if genotype not in mean_connectivity_dict:
+                        mean_connectivity_dict[genotype] = {}
+                    if treatment not in mean_connectivity_dict[genotype]:
+                        mean_connectivity_dict[genotype][treatment] = []
+                    mean_connectivity_dict[genotype][treatment].append(mean_global_connectivity)
+
             data_by_metrics.append(mean_cell_size_dict)
             data_by_metrics.append(mean_amplitude_dict)
             data_by_metrics.append(mean_frequency_dict)
             data_by_metrics.append(mean_rise_time_dict)
             data_by_metrics.append(mean_iei_dict)
+            data_by_metrics.append(activity_dict)
+            data_by_metrics.append(mean_connectivity_dict)
 
         return (None if len(data_by_metrics) == 0 else data_by_metrics)
 
@@ -1169,6 +1495,9 @@ class _AnalyseCalciumTraces(QWidget):
         return list({value["condition_1"] for value in self._plate_map_data.values()})
 
     def _loaded_data(self):
+        if not self._plate_viewer._analysis_data:
+            logger.error('No data to compile. Please analyze the data first!')
+            return False
         if self._plate_viewer._analysis_data and\
             not self._reanalyze and\
             self._plate_viewer._plate_map_genotype and\
@@ -1176,7 +1505,6 @@ class _AnalyseCalciumTraces(QWidget):
             self._handle_plate_map()
             return True
         else:
-            logger.error('No data to compile. Please analyze the data first!')
             return False
 
 # well_dict=[
