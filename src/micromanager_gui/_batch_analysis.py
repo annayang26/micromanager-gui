@@ -178,9 +178,11 @@ class BatchAnalysis(QWidget):
                 for f, label in zip(recording_file_path, labels_path):
                     futures = [
                         executor.submit(_analyze_data, f, label,
+                    futures = executor.submit(_analyze_data, f, label,
                                             self._plate_map_data, self._genotype_pm,
                                             self._treatment_pm, self._stop_event)
                     ]
+                    self._futures.append(futures)
                     self._futures.append(futures)
 
                     for future in tqdm(
@@ -426,22 +428,23 @@ def _analyze(
             # find the peaks in the bleach corrected trace
             peaks = _find_peaks(d_dff, prominence=prominence) # for one ROI
 
+            if len(peaks) < 2:
+                continue
+
             # Peaks
             amplitudes, start, end, new_peaks = _get_amplitude(d_dff, peaks)
+
+            if new_peaks is None or len(new_peaks) < 2:
+                continue
+
             # max_slopes = self._get_max_slope(d_dff, new_peaks, start)
             rise_time = _get_rise_time(d_dff, amplitudes, new_peaks, start, framerate)
             decay_time = _get_decay_time(new_peaks, end, framerate)
 
-            if len(new_peaks) < 2:
-                active = False
-                continue
-
             #ROIData
             iei = _get_iei(new_peaks, framerate)
-            mean_iei = mean_iei_stdev = None
-            if iei:
-                mean_iei = np.mean(iei)
-                mean_iei_stdev = np.std(iei)
+            mean_iei = np.mean(iei)
+            mean_iei_stdev = np.std(iei)
             mean_amplitude = np.mean(amplitudes)
             mean_amplitude_stdev = np.std(amplitudes)
             frequency = len(new_peaks) / (recording_time) # events per second
@@ -601,79 +604,91 @@ def _get_amplitude(dff: list[float], peaks: list[int], deriv_threshold=0.01,
     amplitudes = []
     start_indices = []
     end_indices = []
-    remove_peaks = []
+    new_peaks = []
 
-    if peaks:
-        dff_deriv = np.diff(dff)
-        len_dff_deriv = len(dff_deriv)
+    if len(peaks) < 2:
+        return
 
-        for peak in peaks:
-            start_index = peak
-            end_index = peak
-            under_thresh_count = 0
-            total_count = 0
+    dff_deriv = np.diff(dff)
+    len_dff_deriv = len(dff_deriv)
 
-            if start_index > 0:
-                while start_index > 0 and total_count < total_dist:
-                    start_index -= 1
-                    total_count += 1
-                    if start_index in peaks:
-                        negative_count = 0
-                        while start_index < len_dff_deriv and\
-                                dff_deriv[start_index] < 0 and\
-                                    negative_count < neg_reset_num:
-                            start_index += 1
-                            if dff_deriv[start_index] < 0:
-                                negative_count += 1
-                            else:
-                                negative_count = 0
-                        break
-                    if dff_deriv[start_index] < deriv_threshold:
-                        under_thresh_count += 1
-                    else:
-                        under_thresh_count = 0
-                    if under_thresh_count >= reset_num:
-                        break
+    for peak in peaks:
+        start_index = peak
+        end_index = peak
+        under_thresh_count = 0
+        total_count = 0
 
-            under_thresh_count = 0
-            total_count = 0
+        if start_index >= 0:
+            while (start_index >= 0
+                    and total_count < total_dist):
+                start_index -= 1
+                total_count += 1
+                if start_index in peaks:
+                    negative_count = 0
+                    while start_index < len_dff_deriv and\
+                            dff_deriv[start_index] < 0 and\
+                                negative_count < neg_reset_num:
+                        start_index += 1
+                        if dff_deriv[start_index] < 0:
+                            negative_count += 1
+                        else:
+                            negative_count = 0
+                    break
+                if dff_deriv[start_index] < deriv_threshold:
+                    under_thresh_count += 1
+                else:
+                    under_thresh_count = 0
+                if under_thresh_count >= reset_num:
+                    break
 
-            if end_index < len_dff_deriv - 1:
-                while end_index < len_dff_deriv - 1 and total_count < total_dist:
-                    end_index += 1
-                    total_count += 1
-                    if end_index in peaks:
-                        negative_count = 0
-                        while end_index >= 0 and dff_deriv[end_index] > 0\
-                            and negative_count < neg_reset_num:
-                            end_index -= 1
-                            if dff_deriv[end_index] > 0:
-                                negative_count += 1
-                            else:
-                                negative_count = 0
-                        break
-                    if dff_deriv[end_index] < deriv_threshold:
-                        under_thresh_count += 1
-                    else:
-                        under_thresh_count = 0
-                    if under_thresh_count >= reset_num:
-                        break
+        under_thresh_count = 0
+        total_count = 0
 
-            spk_to_end = dff[peak:(end_index + 1)]
-            start_to_spk = dff[start_index:peak]
-            f_start_index = int(peak - (len(start_to_spk) -
-                                        (np.argmin(start_to_spk) + 1)))
-            f_end_index = int(peak + np.argmin(spk_to_end))
-            amplitude = dff[peak] - dff[f_start_index]
+        if end_index < len_dff_deriv - 1:
+            while (end_index < len_dff_deriv - 1
+                    and total_count < total_dist):
+                end_index += 1
+                total_count += 1
+                if end_index in peaks:
+                    negative_count = 0
+                    while (end_index >= peak
+                            and dff_deriv[end_index] > 0
+                            and negative_count < neg_reset_num):
+                        end_index -= 1
+                        if dff_deriv[end_index] > 0:
+                            negative_count += 1
+                        else:
+                            negative_count = 0
+                    break
+                if dff_deriv[end_index] < deriv_threshold:
+                    under_thresh_count += 1
+                else:
+                    under_thresh_count = 0
+                if under_thresh_count >= reset_num:
+                    break
 
-            if amplitude > 0:
-                start_indices.append(f_start_index)
-                end_indices.append(f_end_index)
-                amplitudes.append(amplitude)
-            else:
-                remove_peaks.append(peak)
+        spk_to_end = dff[peak:(end_index + 1)]
+        start_to_spk = dff[start_index:peak]
+        amplitude = 0
 
-    new_peaks = [peak for peak in peaks if peak not in remove_peaks]
+        if len(spk_to_end) < min_dist or len(start_to_spk) < min_dist:
+            continue
+
+        f_start_index = int(peak - (len(start_to_spk) -
+                                    np.argmin(start_to_spk)))
+        f_end_index = int(peak + np.argmin(spk_to_end))
+
+        if (peak - f_start_index < min_dist
+            or f_end_index - peak < min_dist):
+            continue
+
+        amplitude = dff[peak] - dff[f_start_index]
+
+        if amplitude > 0:
+            start_indices.append(f_start_index)
+            end_indices.append(f_end_index)
+            amplitudes.append(amplitude)
+            new_peaks.append(peak)
 
     return amplitudes, start_indices, end_indices, new_peaks
 
@@ -700,15 +715,30 @@ def _get_rise_time(dff: list[float], amplitude: list[float], peaks: list[int],
                     start: list[int], framerate: float) -> list[float]:
     """Get Raise Time for each peak."""
     rise_time = []
+    if not (len(amplitude) == len(peaks) == len(start)):
+        raise ValueError("The length of amplitude, peaks, and start lists must be equal.")
 
     # NOTE: time to reach half of amplitude
     for amp, peak, s in zip(amplitude, peaks, start):
-        limit_range = int((peak + 1 - s)/5)
-        rise_range = dff[s+limit_range:(peak+1)-limit_range]
-        half_amp = amp/2 + rise_range[0]
-        half_amp_idx = np.argmin([abs(signal - half_amp) for signal in rise_range])
-        rise_time.append((limit_range+half_amp_idx)/framerate) #s
-    # rise_time = [((peaks[i] - start[i] + 1)/framerate) for i in range(len(peaks))]
+        try:
+            limit_range = int((peak + 1 - s)/3)
+            if s + limit_range >= peak - limit_range:
+                print(f"Invalid range for peak {peak}, start {s}")
+                rise_time.append(np.nan)
+                continue
+
+            rise_range = dff[s+limit_range:(peak+1)-limit_range]
+
+            if len(rise_range) == 0:
+                print(f"Rise range is empty for peak {peak}, start {s}")
+                rise_time.append(np.nan)
+                continue
+
+            half_amp = amp/2 + dff[s]
+            half_amp_idx = np.argmin([abs(signal - half_amp) for signal in rise_range])
+            rise_time.append((limit_range+half_amp_idx)/framerate) #s
+        except Exception as e:
+            print(f'error in rise time calculation, {e}')
 
     return rise_time
 
@@ -722,12 +752,10 @@ def _get_decay_time( peaks: list[int], end: list[int], framerate: float
 # IEI: peak to peak
 def _get_iei(peaks: list[int], framerate: float) -> list[float]:
     """Calculate the interevent interval."""
-    iei = []
-    if len(peaks) > 0:
-        iei_frames = np.diff(np.array(peaks))
-        iei.append(iei_frames/framerate) #s
+    iei_frames = np.diff(np.array(peaks))
+    iei = cast(list, iei_frames/framerate) #s
 
-    return (None if len(iei) == 0 else iei)
+    return iei
 
 def output_csv(output_path: str,
                analysis_data: dict,
@@ -778,11 +806,14 @@ def output_csv(output_path: str,
                                 row = 5
 
                             if i < len(data_list):
-                                entry = float(data_list[i])
-                                wkst.write_number(row,
-                                                    start*col_per_treatment+i+1,
-                                                    entry,
-                                                    num_format)
+                                entry = data_list[i]
+                                if entry == 'N/A':
+                                    wkst.write(row, start*col_per_treatment+i+1, entry)
+                                else:
+                                    wkst.write_number(row,
+                                                        start*col_per_treatment+i+1,
+                                                        float(entry),
+                                                        num_format)
                             else:
                                 entry = 'N/A'
                                 wkst.write(row, start*col_per_treatment+i+1, entry)
@@ -791,7 +822,7 @@ def output_csv(output_path: str,
         print("No data were found. Please check the plate map and data!")
 
 def _compile_readout_data(
-        analysis_data: dict, pm_data: dict
+        analysis_data: dict[str, dict[str, ROIData]], pm_data: dict
         ) -> list[dict[str, dict[str, list[float]]]]:
     data_by_metrics = []
     mean_amplitude_dict = {}
@@ -822,7 +853,7 @@ def _compile_readout_data(
                 active_cells: int = 0
 
                 for roiData in fov_dict.values():
-                    if roiData.activity is True:
+                    if roiData.activity:
                         cell_size_list.append(roiData.cell_size)
                         amplitude_list.append(roiData.mean_amplitude)
                         frequency_list.append(roiData.frequency)
@@ -830,18 +861,25 @@ def _compile_readout_data(
                         rise_time_list.append(roiData.mean_rise_time)
                         active_cells += 1
 
-                if len(amplitude_list) > 0:
-                    mean_amplitude_fov = np.nanmean(amplitude_list, dtype=np.float64)
-                if len(cell_size_list) > 0:
-                    mean_cell_size_fov = np.nanmean(cell_size_list, dtype=np.float64)
-                if len(frequency_list) > 0:
-                    mean_frequency_fov = np.nanmean(frequency_list, dtype=np.float64)
+                mean_amplitude_fov = np.nanmean(amplitude_list, dtype=np.float64
+                                                ) if (len(amplitude_list)>0
+                                                        ) else 'N/A'
+                mean_cell_size_fov = np.nanmean(cell_size_list, dtype=np.float64
+                                                ) if (len(cell_size_list)>0
+                                                        ) else 'N/A'
+                mean_frequency_fov = np.nanmean(frequency_list, dtype=np.float64
+                                                ) if (len(frequency_list)>0
+                                                        ) else 'N/A'
                 # mean_max_slope_fov = np.mean(max_slope_list)
-                if len(iei_list) > 0:
-                    mean_iei_fov = np.nanmean(iei_list, dtype=np.float64)
-                if len(rise_time_list) > 0:
-                    mean_rise_time_fov = np.nanmean(rise_time_list, dtype=np.float64)
-                pctg_active = active_cells / len(list(fov_dict.keys())) * 100
+                mean_iei_fov = np.nanmean(iei_list, dtype=np.float64
+                                                ) if (len(iei_list)>0
+                                                        ) else 'N/A'
+                mean_rise_time_fov = np.nanmean(rise_time_list, dtype=np.float64
+                                                ) if (len(rise_time_list)>0
+                                                        ) else 'N/A'
+                pctg_active = active_cells / len(list(fov_dict.keys())) * 100 if (
+                                                len(cell_size_list)>0
+                                                        ) else 'N/A'
 
                 if genotype not in mean_amplitude_dict:
                     mean_amplitude_dict[genotype] = {}
