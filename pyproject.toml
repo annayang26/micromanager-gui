@@ -79,6 +79,7 @@ repository = "https://github.com/fdrgsp/micromanager-gui"
 mmgui = "micromanager_gui.__main__:main"
 pv = "micromanager_gui.__main__:plate_viewer"
 bcp = "micromanager_gui.__main__:batch_cellpose"
+ba = "micromanager_gui.__main__:batch_analysis"
 
 # Entry points
 # https://peps.python.org/pep-0621/#entry-points
