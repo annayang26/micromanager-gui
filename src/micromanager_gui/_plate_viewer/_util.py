@@ -69,6 +69,7 @@ DEC_DFF_FREQUENCY = "Deconvolved DeltaF/F0 Frequencies"
 DEC_DFF_AMPLITUDE_VS_FREQUENCY = "Deconvolved DeltaF/F0 Amplitudes vs Frequencies"
 DEC_DFF_IEI = "Deconvolved DeltaF/F0 Inter-event Interval"
 
+CELL_SIZE_ALL = "Cell sizes"
 DEC_DFF_AMPLITUDE_VS_FREQUENCY_ALL = "Deconvolved DeltaF/F0 Amplitudes vs Frequencies"
 DEC_DFF_AMPLITUDE_ALL = "Deconvolved DeltaF/F0 Amplitudes"
 DEC_DFF_FREQUENCY_ALL = "Deconvolved DeltaF/F0 Frequencies"
@@ -81,6 +82,7 @@ STIMULATED_ROIS = "Stimulated vs Non-Stimulated ROIs"
 STIMULATED_ROIS_WITH_STIMULATED_AREA = (
     "Stimulated vs Non-Stimulated ROIs with Stimulated Area"
 )
+GLOBAL_SYNCHRONY = "Global Synchrony"
 
 SINGLE_WELL_COMBO_OPTIONS = [
     RAW_TRACES,
@@ -101,6 +103,7 @@ SINGLE_WELL_COMBO_OPTIONS = [
     STIMULATED_AREA,
     STIMULATED_ROIS,
     STIMULATED_ROIS_WITH_STIMULATED_AREA,
+    GLOBAL_SYNCHRONY,
 ]
 
 MULTI_WELL_COMBO_OPTIONS = [
@@ -429,6 +432,12 @@ def _calculate_bg(data: np.ndarray, window: int, percentile: int = 10) -> np.nda
 
 def get_linear_phase(frames: int, peaks: np.ndarray) -> list[float]:
     """Calculate the linear phase progression."""
+    if not peaks.any():
+        phase = [0.0 for _ in range(frames)]
+        return phase
+
+    peaks_list = [int(peak) for peak in peaks]
+
     if any(p < 0 or p >= frames for p in peaks):
         raise ValueError("All peaks must be within the range of frames.")
 
