@@ -430,7 +430,7 @@ class _MultiConditionSelection(QGroupBox):
     def _get_fov_data_by_well(
         self, well_sel: list[str], analysis_data: dict[str, dict[str, ROIData]]
     ) -> dict[str, dict[str, ROIData]] | None:
-        """Group FOVs by well."""
+        """Group fovs by well."""
         if len(well_sel) > 1:
             wells = well_sel.copy()
         else:

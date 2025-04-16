@@ -50,7 +50,6 @@ from ._util import (
     calculate_dff,
     compile_data_to_csv,
     create_stimulation_mask,
-    # get_cubic_phase,
     get_iei,
     get_linear_phase,
     get_overlap_roi_with_stimulated_area,
