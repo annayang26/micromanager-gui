@@ -506,15 +506,14 @@ def get_connectivity(phase_dict: dict[str, list[float]]) -> float | None:
     return float(
         np.median(np.sum(connection_matrix, axis=0) - 1)
         / (connection_matrix.shape[0] - 1)
+        if not np.all(connection_matrix == 0)
+        else 0.0
     )
 
 
 def _get_connectivity_matrix(phase_dict: dict[str, list[float]]) -> np.ndarray | None:
     """Calculate global connectivity using vectorized operations."""
     active_rois = list(phase_dict.keys())  # ROI names
-
-    if len(active_rois) < 2:
-        return None
 
     # Convert phase_dict values into a NumPy array of shape (N, T)
     phase_array = np.array([phase_dict[roi] for roi in active_rois])  # Shape (N, T)
