@@ -107,10 +107,12 @@ SINGLE_WELL_COMBO_OPTIONS = [
 ]
 
 MULTI_WELL_COMBO_OPTIONS = [
+    CELL_SIZE_ALL,
     DEC_DFF_AMPLITUDE_VS_FREQUENCY_ALL,
     DEC_DFF_AMPLITUDE_ALL,
     DEC_DFF_FREQUENCY_ALL,
     DEC_DFF_IEI_ALL,
+    # SYNCHRONY_ALL,
 ]
 # ------------------------------------------------------------------------------------
 
