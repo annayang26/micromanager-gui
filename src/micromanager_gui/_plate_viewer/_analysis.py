@@ -876,8 +876,11 @@ class _AnalyseCalciumTraces(QWidget):
         # get the conditions for the well
         condition_1, condition_2 = self._get_conditions(fov_name)
 
-        # get the linear and cubic phase of the peaks in the dec_dff trace
-        instantaneous_phase = get_linear_phase(timepoints, peaks_dec_dff)
+        instantaneous_phase = (
+            get_linear_phase(timepoints, peaks_dec_dff)
+            if len(peaks_dec_dff) > 0
+            else None
+        )
 
         # if the elapsed time is not available or for any reason is different from
         # the number of timepoints, set it as list of timepoints every exp_time
