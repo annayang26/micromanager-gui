@@ -30,6 +30,7 @@ from ._util import (
     COND1,
     COND2,
     MULTI_WELL_COMBO_OPTIONS,
+    SEPARATOR,
     SINGLE_WELL_COMBO_OPTIONS,
     ROIData,
 )
@@ -41,7 +42,6 @@ if TYPE_CHECKING:
 RED = "#C33"
 HEIGHT = 20
 RANDOM_CHOICE = 5
-SEPARATOR = "\n"
 
 
 def _get_fov_data(
@@ -357,8 +357,6 @@ class _MultiConditionSelection(QGroupBox):
 
     def _on_toggle(self, state: bool) -> None:
         """On toggle."""
-        # print(f"plate viewer genotype list: {self._graph._plate_viewer._plate_map_genotype.value()}")
-        # print(f"plate viewer treatment list: {self._graph._plate_viewer._plate_map_treatment.value()}")
         self._update_condition_list()
         if not state:
             self._graph._on_combo_changed(self._graph._combo.currentText())
