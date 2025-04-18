@@ -25,6 +25,7 @@ from micromanager_gui._plate_viewer._util import (
     STIMULATED_ROIS_WITH_STIMULATED_AREA,
 )
 
+# SYNCHRONY_ALL,
 from ._multi_wells_plots._multi_well_data_plot import (
     _plot_multi_cond_data,
     _plot_multi_well_data,
@@ -106,7 +107,7 @@ def plot_single_well_data(
         return _generate_raster_plot(
             widget, data, rois, **SINGLE_WELL_GRAPHS_OPTIONS[text]
         )
-    
+
     if text in {GLOBAL_SYNCHRONY}:
         return _plot_synchrony(widget, data, rois, **SINGLE_WELL_GRAPHS_OPTIONS[text])
 
