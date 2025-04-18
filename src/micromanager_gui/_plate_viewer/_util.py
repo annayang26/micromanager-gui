@@ -23,7 +23,6 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from scipy.interpolate import CubicSpline
 from skimage import filters, morphology
 
 # Define a type variable for the BaseClass
@@ -463,70 +462,43 @@ def get_linear_phase(frames: int, peaks: np.ndarray) -> list[float]:
     return phase
 
 
-def get_cubic_phase(total_frames: int, peaks: np.ndarray) -> list[float]:
-    """Calculate the instantaneous phase with smooth interpolation and handle negative values."""  # noqa: E501
-    peaks_list = [int(peak) for peak in peaks]
-
-    if peaks_list[0] != 0:
-        peaks_list.insert(0, 0)
-
-    if peaks_list[-1] != (total_frames - 1):
-        peaks_list.append(total_frames - 1)
-
-    num_cycles = len(peaks_list) - 1
-
-    peak_phases = np.arange(num_cycles + 1) * 2 * np.pi
-
-    cubic_spline = CubicSpline(peaks_list, peak_phases, bc_type="clamped")
-
-    frames = np.arange(total_frames)
-    phases = cubic_spline(frames)
-
-    phases = np.clip(phases, 0, None)
-    phases = np.mod(phases, 2 * np.pi)
-
-    return [float(phase) for phase in phases]
-
-
-def get_connectivity(phase_dict: dict[str, list[float]]) -> float | None:
+def _get_synchrony(synchrony_matrix: np.ndarray | None) -> float | None:
     """Calculate the connection matrix."""
-    connection_matrix = _get_connectivity_matrix(phase_dict)
-
-    if connection_matrix is None or connection_matrix.size == 0:
+    if synchrony_matrix is None or synchrony_matrix.size == 0:
         return None
 
-    # Ensure the matrix is at least 2x2 and square
-    if connection_matrix.shape[0] < 2 or (
-        connection_matrix.shape[0] != connection_matrix.shape[1]
+    # ensure the matrix is at least 2x2 and square
+    if synchrony_matrix.shape[0] < 2 or (
+        synchrony_matrix.shape[0] != synchrony_matrix.shape[1]
     ):
         return None
 
     return float(
-        np.median(np.sum(connection_matrix, axis=0) - 1)
-        / (connection_matrix.shape[0] - 1)
-        if not np.all(connection_matrix == 0)
-        else 0.0
+        np.median(np.sum(synchrony_matrix, axis=0) - 1)
+        / (synchrony_matrix.shape[0] - 1)
     )
 
 
-def _get_connectivity_matrix(phase_dict: dict[str, list[float]]) -> np.ndarray | None:
-    """Calculate global connectivity using vectorized operations."""
-    active_rois = list(phase_dict.keys())  # ROI names
+def _get_synchrony_matrix(phase_dict: dict[str, list[float]]) -> np.ndarray | None:
+    """Calculate global synchrony (as in the FluoroSNNAP software)."""
+    active_rois = list(phase_dict.keys())
+    if len(active_rois) < 2:
+        return None
 
-    # Convert phase_dict values into a NumPy array of shape (N, T)
-    phase_array = np.array([phase_dict[roi] for roi in active_rois])  # Shape (N, T)
+    # convert phase_dict values into a NumPy array of shape (#ROIs, #Timepoints)
+    phase_array = np.array([phase_dict[roi] for roi in active_rois])
 
-    # Compute pairwise phase difference using broadcasting (Shape: (N, N, T))
+    # compute pairwise phase difference (shape: (#ROIs, #ROIs, #Timepoints))
     phase_diff = np.expand_dims(phase_array, axis=1) - np.expand_dims(
         phase_array, axis=0
     )
 
-    # Ensure phase difference is within valid range [0, 2π]
+    # ensure phase difference is within valid range [0, 2π]
     phase_diff = np.mod(np.abs(phase_diff), 2 * np.pi)
 
-    # Compute cosine and sine of the phase differences
-    cos_mean = np.mean(np.cos(phase_diff), axis=2)  # Shape: (N, N)
-    sin_mean = np.mean(np.sin(phase_diff), axis=2)  # Shape: (N, N)
+    # compute cosine and sine of the phase differences
+    cos_mean = np.mean(np.cos(phase_diff), axis=2)  # shape: (#ROIs, N)
+    sin_mean = np.mean(np.sin(phase_diff), axis=2)  # shape: (#ROIs, N)
 
     return np.array(np.sqrt(cos_mean**2 + sin_mean**2))
 
@@ -667,6 +639,123 @@ def _organize_fov_by_condition(
     return conds_ordered
 
 
+def _compile_data_per_fov(
+    fov_dict: dict[str, ROIData], stimulated_exp: bool
+) -> tuple[dict[str, list[float]], dict[str, list[float]], str]:
+    """Compile FOV data from all ROI data."""
+    # compile data for one fov
+    data_dict: dict[str, list[float]] = {}
+    sti_data_dict: dict[str, list[float]] = {}
+
+    for measurement in COMPILE_METRICS:
+        if measurement not in data_dict:
+            data_dict[measurement] = []
+        if stimulated_exp and measurement not in sti_data_dict:
+            sti_data_dict[measurement] = []
+
+    amplitude_list_fov: list[float] = []
+    cell_size_list_fov: list[float] = []
+    frequency_list_fov: list[float] = []
+    iei_list_fov: list[float] = []
+    active_cells: int = 0
+    cell_size_unit: str = ""
+    instantaneous_phase_dict: dict[str, list[float]] = {}
+
+    if stimulated_exp:
+        sti_amplitude_list_fov: list[float] = []
+        sti_cell_size_list_fov: list[float] = []
+        sti_frequency_list_fov: list[float] = []
+        sti_iei_list_fov: list[float] = []
+        sti_active_cells: int = 0
+
+    for roi_name, roiData in fov_dict.items():
+        if not isinstance(roiData, ROIData):
+            continue
+
+        # cell size
+        if roiData.cell_size:
+            if stimulated_exp and roiData.stimulated:
+                sti_cell_size_list_fov.append(roiData.cell_size)
+            else:
+                cell_size_list_fov.append(roiData.cell_size)
+
+        if len(cell_size_unit) < 1:
+            cell_size_unit = (
+                roiData.cell_size_units
+                if isinstance(roiData.cell_size_units, str)
+                else ""
+            )
+
+        if (
+            isinstance(roiData.instantaneous_phase, list)
+            and len(roiData.instantaneous_phase) > 0
+        ):
+            if roi_name not in instantaneous_phase_dict:
+                instantaneous_phase_dict[roi_name] = []
+            instantaneous_phase_dict[roi_name] = roiData.instantaneous_phase
+
+        # if cells are active (i.e. have at least one peak)
+        if roiData.active:
+            # amplitude
+            if stimulated_exp and roiData.stimulated:
+                sti_amplitude_list_fov.extend(
+                    roiData.peaks_amplitudes_dec_dff
+                ) if roiData.peaks_amplitudes_dec_dff else []
+            else:
+                amplitude_list_fov.extend(
+                    roiData.peaks_amplitudes_dec_dff
+                ) if roiData.peaks_amplitudes_dec_dff else []
+
+            # frequency
+            if roiData.dec_dff_frequency:
+                if stimulated_exp and roiData.stimulated:
+                    sti_frequency_list_fov.append(roiData.dec_dff_frequency)
+                else:
+                    frequency_list_fov.append(roiData.dec_dff_frequency)
+
+            # iei
+            if stimulated_exp and roiData.stimulated:
+                sti_iei_list_fov.extend(roiData.iei) if roiData.iei else []
+            else:
+                iei_list_fov.extend(roiData.iei) if roiData.iei else []
+
+            # activity
+            if stimulated_exp and roiData.stimulated:
+                sti_active_cells += 1
+            else:
+                active_cells += 1
+
+    synchrony_matrix = _get_synchrony_matrix(instantaneous_phase_dict)
+    linear_synchrony = _get_synchrony(synchrony_matrix)
+
+    if stimulated_exp:
+        sti_percentage_active = (
+            float(sti_active_cells / len(sti_cell_size_list_fov) * 100)
+            if len(sti_cell_size_list_fov) > 0
+            else np.nan
+        )
+    percentage_active = float(active_cells / len(cell_size_list_fov) * 100)
+
+    # NOTE: if adding more output measurements,
+    # make sure to check that the keys are in the COMPILED_METRICS
+    data_dict["amplitude"] = amplitude_list_fov
+    data_dict["frequency"] = frequency_list_fov
+    data_dict["cell_size"] = cell_size_list_fov
+    data_dict["iei"] = iei_list_fov
+    data_dict["percentage_active"] = [percentage_active]
+    data_dict["synchrony"] = [
+        linear_synchrony if isinstance(linear_synchrony, float) else np.nan
+    ]
+    if stimulated_exp:
+        sti_data_dict["amplitude"] = sti_amplitude_list_fov
+        sti_data_dict["frequency"] = sti_frequency_list_fov
+        sti_data_dict["cell_size"] = sti_cell_size_list_fov
+        sti_data_dict["iei"] = sti_iei_list_fov
+        sti_data_dict["percentage_active"] = [sti_percentage_active]
+
+    return data_dict, sti_data_dict, cell_size_unit
+
+
 def _compile_per_metric(
     analysis_data: dict[str, dict[str, ROIData]],
     plate_map: dict[str, dict[str, str]],
@@ -712,121 +801,6 @@ def _compile_per_metric(
     return data_by_metrics, cell_size_unit
 
 
-def _compile_data_per_fov(
-    fov_dict: dict[str, ROIData], stimulated_exp: bool
-) -> tuple[dict[str, list[float]], dict[str, list[float]], str]:
-    """Compile FOV data from all ROI data."""
-    # compile data for one fov
-    data_dict: dict[str, list[float]] = {}
-    sti_data_dict: dict[str, list[float]] = {}
-
-    for measurement in COMPILE_METRICS:
-        if measurement not in data_dict:
-            data_dict[measurement] = []
-        if stimulated_exp and measurement not in sti_data_dict:
-            sti_data_dict[measurement] = []
-
-    amplitude_list_fov: list[float] = []
-    cell_size_list_fov: list[float] = []
-    frequency_list_fov: list[float] = []
-    iei_list_fov: list[float] = []
-    active_cells: int = 0
-    cell_size_unit: str = ""
-    # instantaneous_phase_dict: dict[str, list[float]] = {}
-
-    if stimulated_exp:
-        sti_amplitude_list_fov: list[float] = []
-        sti_cell_size_list_fov: list[float] = []
-        sti_frequency_list_fov: list[float] = []
-        sti_iei_list_fov: list[float] = []
-        sti_active_cells: int = 0
-
-    for _, roiData in fov_dict.items():
-        if not isinstance(roiData, ROIData):
-            continue
-
-        # cell size
-        if roiData.cell_size:
-            if stimulated_exp and roiData.stimulated:
-                sti_cell_size_list_fov.append(roiData.cell_size)
-            else:
-                cell_size_list_fov.append(roiData.cell_size)
-
-        if len(cell_size_unit) < 1:
-            cell_size_unit = (
-                roiData.cell_size_units
-                if isinstance(roiData.cell_size_units, str)
-                else ""
-            )
-
-        # if (
-        #     isinstance(roiData.instantaneous_phase, list)
-        #     and len(roiData.instantaneous_phase) > 0
-        # ):
-        #     if roi_name not in instantaneous_phase_dict:
-        #         instantaneous_phase_dict[roi_name] = []
-        #     instantaneous_phase_dict[roi_name] = roiData.instantaneous_phase
-
-        # if cells are active (i.e. have at least one peak)
-        if roiData.active:
-            # amplitude
-            if stimulated_exp and roiData.stimulated:
-                sti_amplitude_list_fov.extend(
-                    roiData.peaks_amplitudes_dec_dff
-                ) if roiData.peaks_amplitudes_dec_dff else []
-            else:
-                amplitude_list_fov.extend(
-                    roiData.peaks_amplitudes_dec_dff
-                ) if roiData.peaks_amplitudes_dec_dff else []
-
-            # frequency
-            if roiData.dec_dff_frequency:
-                if stimulated_exp and roiData.stimulated:
-                    sti_frequency_list_fov.append(roiData.dec_dff_frequency)
-                else:
-                    frequency_list_fov.append(roiData.dec_dff_frequency)
-
-            # iei
-            if stimulated_exp and roiData.stimulated:
-                sti_iei_list_fov.extend(roiData.iei) if roiData.iei else []
-            else:
-                iei_list_fov.extend(roiData.iei) if roiData.iei else []
-
-            # activity
-            if stimulated_exp and roiData.stimulated:
-                sti_active_cells += 1
-            else:
-                active_cells += 1
-
-    # linear_synchrony = get_connectivity(instantaneous_phase_dict)
-    if stimulated_exp:
-        sti_percentage_active = (
-            float(sti_active_cells / len(sti_cell_size_list_fov) * 100)
-            if len(sti_cell_size_list_fov) > 0
-            else np.nan
-        )
-    percentage_active = float(active_cells / len(cell_size_list_fov) * 100)
-
-    # NOTE: if adding more output measurements,
-    # make sure to check that the keys are in the COMPILED_METRICS
-    data_dict["amplitude"] = amplitude_list_fov
-    data_dict["frequency"] = frequency_list_fov
-    data_dict["cell_size"] = cell_size_list_fov
-    data_dict["iei"] = iei_list_fov
-    data_dict["percentage_active"] = [percentage_active]
-    # data_dict["synchrony"] = [
-    #     linear_synchrony if isinstance(linear_synchrony, float) else np.nan
-    # ]
-    if stimulated_exp:
-        sti_data_dict["amplitude"] = sti_amplitude_list_fov
-        sti_data_dict["frequency"] = sti_frequency_list_fov
-        sti_data_dict["cell_size"] = sti_cell_size_list_fov
-        sti_data_dict["iei"] = sti_iei_list_fov
-        sti_data_dict["percentage_active"] = [sti_percentage_active]
-
-    return data_dict, sti_data_dict, cell_size_unit
-
-
 def _output_csv(
     compiled_data_list: list[dict[str, list[float]]],
     cell_size_unit: str,
@@ -834,7 +808,7 @@ def _output_csv(
     save_path: str,
 ) -> None:
     """Save csv files of the data."""
-    exp_name = Path(save_path).parent.name
+    exp_name = Path(save_path).stem
 
     if compiled_data_list is None:
         return None

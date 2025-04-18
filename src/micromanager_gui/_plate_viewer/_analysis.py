@@ -337,7 +337,7 @@ class _AnalyseCalciumTraces(QWidget):
             save_path,
         )
 
-        msg = f"Data compiled and saved in folder {Path(save_path).parent.name}"
+        msg = f"Data compiled and saved in folder {Path(save_path).stem}"
         LOGGER.info(msg)
 
     def cancel(self) -> None:
