@@ -30,7 +30,6 @@ from ._util import (
     COND1,
     COND2,
     MULTI_WELL_COMBO_OPTIONS,
-    SEPARATOR,
     SINGLE_WELL_COMBO_OPTIONS,
     ROIData,
 )
@@ -485,7 +484,7 @@ class _MultiConditionSelection(QGroupBox):
             cond1 = well_info.get(COND1) if COND1 in well_info else ""
             cond2 = well_info.get(COND2) if COND2 in well_info else ""
 
-            conds = f"{cond1}{SEPARATOR}{cond2}"
+            conds = f"{cond1}_{cond2}"
 
             if conds not in cond_ordered:
                 continue
@@ -513,7 +512,7 @@ class _MultiConditionSelection(QGroupBox):
         cond_ordered: list[str] = []
         for cond1 in cond1_list:
             for cond2 in cond2_list:
-                cond_ordered.append(f"{cond1}{SEPARATOR}{cond2}")
+                cond_ordered.append(f"{cond1}_{cond2}")
 
         return cond_ordered
 

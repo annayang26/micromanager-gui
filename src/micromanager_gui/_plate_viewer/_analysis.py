@@ -34,8 +34,8 @@ from superqt.utils import create_worker
 from tqdm import tqdm
 
 from ._logger import LOGGER
+from ._to_csv import _save_to_csv
 from ._util import (
-    BLUE,
     COND1,
     COND2,
     GENOTYPE_MAP,
@@ -48,7 +48,6 @@ from ._util import (
     _ElapsedTimer,
     _WaitingProgressBarWidget,
     calculate_dff,
-    compile_data_to_csv,
     create_stimulation_mask,
     get_iei,
     get_linear_phase,
@@ -203,11 +202,6 @@ class _AnalyseCalciumTraces(QWidget):
         self._run_btn.setIcon(icon(MDI6.play, color=GREEN))
         self._run_btn.setIconSize(QSize(25, 25))
         self._run_btn.clicked.connect(self.run)
-        self._save_btn = QPushButton("Compile Data")
-        self._save_btn.setSizePolicy(*FIXED)
-        self._save_btn.setIcon(icon(MDI6.file, color=BLUE))
-        self._save_btn.setIconSize(QSize(25, 25))
-        self._save_btn.clicked.connect(self.compile_data)
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.setSizePolicy(*FIXED)
         self._cancel_btn.setIcon(QIcon(icon(MDI6.stop, color=RED)))
@@ -226,7 +220,6 @@ class _AnalyseCalciumTraces(QWidget):
         progress_wdg_layout = QHBoxLayout(progress_wdg)
         progress_wdg_layout.setContentsMargins(0, 0, 0, 0)
         progress_wdg_layout.addWidget(self._run_btn)
-        progress_wdg_layout.addWidget(self._save_btn)
         progress_wdg_layout.addWidget(self._cancel_btn)
         progress_wdg_layout.addWidget(self._progress_bar)
         progress_wdg_layout.addWidget(self._progress_pos_label)
@@ -310,35 +303,9 @@ class _AnalyseCalciumTraces(QWidget):
             _connect={
                 "yielded": self._show_and_log_error,
                 "finished": self._on_worker_finished,
-                "errored": self._on_worker_finished,
+                "errored": self._on_worker_errored,
             },
         )
-
-    def compile_data(self) -> None:
-        """Save the analysis data into CSV files."""
-        save_path = self._analysis_path.value()
-
-        # check if analysis was loaded
-        if (
-            self._plate_viewer is None
-            or len(list(self._plate_viewer._analysis_data.keys())) < 1
-        ):
-            msg = "No analyzed data!\nLoad or run analysis."
-            LOGGER.error(msg)
-            show_error_dialog(self, msg)
-            return None
-
-        self._handle_plate_map()
-
-        compile_data_to_csv(
-            self._plate_viewer._analysis_data,
-            self._plate_map_data,
-            self._is_stimulated(),
-            save_path,
-        )
-
-        msg = f"Data compiled and saved in folder {Path(save_path).stem}"
-        LOGGER.info(msg)
 
     def cancel(self) -> None:
         """Cancel the current run."""
@@ -543,12 +510,14 @@ class _AnalyseCalciumTraces(QWidget):
             self._plate_viewer._analysis_data = self._analysis_data
             self._plate_viewer._analysis_files_path = self._analysis_path.value()
 
-        compile_data_to_csv(
-            self._analysis_data,
-            self._plate_map_data,
-            self._is_stimulated(),
-            self._analysis_path.value(),
-        )
+            # update the graphs with the new data
+            if self._plate_viewer._tab.currentIndex() == 1:
+                self._plate_viewer._on_tab_changed(1)
+                for gh in self._plate_viewer.SW_GRAPHS:
+                    gh._on_combo_changed(gh._combo.currentText())
+
+        # save the analysis data to a JSON file
+        _save_to_csv(self._analysis_path.value(), self._analysis_data)
 
         # show a message box if there are failed labels
         if self._failed_labels:
@@ -557,6 +526,13 @@ class _AnalyseCalciumTraces(QWidget):
                 + "\n".join(self._failed_labels)
             )
             self._show_and_log_error(msg)
+
+    def _on_worker_errored(self) -> None:
+        """Called when the worker encounters an error."""
+        LOGGER.info("Extraction of traces terminated with an error.")
+        self._enable(True)
+        self._elapsed_timer.stop()
+        self._cancel_waiting_bar.stop()
 
     def _update_progress_label(self, time_str: str) -> None:
         """Update the progress label with elapsed time."""
@@ -893,8 +869,8 @@ class _AnalyseCalciumTraces(QWidget):
         # store the data to the analysis dict as ROIData
         self._analysis_data[fov_name][str(label_value)] = ROIData(
             well_fov_position=fov_name,
-            raw_trace=roi_trace.tolist(),  # type: ignore
-            dff=dff.tolist(),  # type: ignore
+            raw_trace=roi_trace.tolist(),
+            dff=dff.tolist(),
             dec_dff=dec_dff.tolist(),
             peaks_dec_dff=peaks_dec_dff.tolist(),
             peaks_amplitudes_dec_dff=peaks_amplitudes_dec_dff,
