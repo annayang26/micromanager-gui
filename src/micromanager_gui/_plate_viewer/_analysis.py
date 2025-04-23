@@ -34,6 +34,7 @@ from superqt.utils import create_worker
 from tqdm import tqdm
 
 from ._logger import LOGGER
+from ._to_csv import _save_to_csv
 from ._util import (
     COND1,
     COND2,
@@ -48,7 +49,6 @@ from ._util import (
     _WaitingProgressBarWidget,
     calculate_dff,
     create_stimulation_mask,
-    get_cubic_phase,
     get_iei,
     get_linear_phase,
     get_overlap_roi_with_stimulated_area,
@@ -303,7 +303,7 @@ class _AnalyseCalciumTraces(QWidget):
             _connect={
                 "yielded": self._show_and_log_error,
                 "finished": self._on_worker_finished,
-                "errored": self._on_worker_finished,
+                "errored": self._on_worker_errored,
             },
         )
 
@@ -510,6 +510,15 @@ class _AnalyseCalciumTraces(QWidget):
             self._plate_viewer._analysis_data = self._analysis_data
             self._plate_viewer._analysis_files_path = self._analysis_path.value()
 
+            # update the graphs with the new data
+            if self._plate_viewer._tab.currentIndex() == 1:
+                self._plate_viewer._on_tab_changed(1)
+                for gh in self._plate_viewer.SW_GRAPHS:
+                    gh._on_combo_changed(gh._combo.currentText())
+
+        # save the analysis data to a JSON file
+        _save_to_csv(self._analysis_path.value(), self._analysis_data)
+
         # show a message box if there are failed labels
         if self._failed_labels:
             msg = (
@@ -517,6 +526,13 @@ class _AnalyseCalciumTraces(QWidget):
                 + "\n".join(self._failed_labels)
             )
             self._show_and_log_error(msg)
+
+    def _on_worker_errored(self) -> None:
+        """Called when the worker encounters an error."""
+        LOGGER.info("Extraction of traces terminated with an error.")
+        self._enable(True)
+        self._elapsed_timer.stop()
+        self._cancel_waiting_bar.stop()
 
     def _update_progress_label(self, time_str: str) -> None:
         """Update the progress label with elapsed time."""
@@ -836,11 +852,11 @@ class _AnalyseCalciumTraces(QWidget):
         # get the conditions for the well
         condition_1, condition_2 = self._get_conditions(fov_name)
 
-        # get the linear and cubic phase of the peaks in the dec_dff trace
-        linear_phase, cubic_phase = [], []
-        if len(peaks_dec_dff) > 0:
-            linear_phase = get_linear_phase(timepoints, peaks_dec_dff)
-            cubic_phase = get_cubic_phase(timepoints, peaks_dec_dff)
+        instantaneous_phase = (
+            get_linear_phase(timepoints, peaks_dec_dff)
+            if len(peaks_dec_dff) > 0
+            else None
+        )
 
         # if the elapsed time is not available or for any reason is different from
         # the number of timepoints, set it as list of timepoints every exp_time
@@ -853,8 +869,8 @@ class _AnalyseCalciumTraces(QWidget):
         # store the data to the analysis dict as ROIData
         self._analysis_data[fov_name][str(label_value)] = ROIData(
             well_fov_position=fov_name,
-            raw_trace=roi_trace.tolist(),  # type: ignore
-            dff=dff.tolist(),  # type: ignore
+            raw_trace=roi_trace.tolist(),
+            dff=dff.tolist(),
             dec_dff=dec_dff.tolist(),
             peaks_dec_dff=peaks_dec_dff.tolist(),
             peaks_amplitudes_dec_dff=peaks_amplitudes_dec_dff,
@@ -867,8 +883,7 @@ class _AnalyseCalciumTraces(QWidget):
             condition_2=condition_2,
             total_recording_time_in_sec=tot_time_sec,
             active=len(peaks_dec_dff) > 0,
-            linear_phase=linear_phase,
-            cubic_phase=cubic_phase,
+            instantaneous_phase=instantaneous_phase,
             iei=iei,
             stimulated=roi_stimulation_overlap_ratio > STIMULATION_AREA_THRESHOLD,
         )
