@@ -197,7 +197,7 @@ class _BrowseWidget(QWidget):
                 self,
                 f"Select the {self._label_text}.",
                 "",
-                "JSON (*.json); IMAGES (*.tif *.tiff)",
+                "JSON (*.json);; IMAGES (*.tif *.tiff)",
             )
             if path:
                 self._path.setText(path)
