@@ -235,8 +235,14 @@ class BatchAnalysis(QWidget):
         for rec_folder, label_folder in zip(
             self.recording_folder_path, self.labels_folder_path
         ):
-            self._analysis_folder(rec_folder, label_folder, stimulated)
+            # self._analysis_folder(rec_folder, label_folder, stimulated)
+            print("rec: ", rec_folder)
+            print("label: ", label_folder)
             self._analysis_data = {}
+
+        self.clear()
+        print("after clearing, rec folder: ", len(self.recording_folder_path))
+        print("after clearing, label folder: ", len(self.labels_folder_path))
 
     def _find_recording_label_folders(self, root_folder: str) -> None:
         """Zip recording folder with label folder."""
@@ -389,7 +395,7 @@ class BatchAnalysis(QWidget):
                     for start in range(0, pos, chunk_size)
                 ]
 
-                for idx, future in enumerate(as_completed(futures)):
+                for _idx, future in enumerate(as_completed(futures)):
                     if self._check_for_abort_requested():
                         print("Abort requested, cancelling all futures...")
                         for f in futures:
