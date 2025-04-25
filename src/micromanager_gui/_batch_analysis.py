@@ -195,9 +195,17 @@ class BatchAnalysis(QWidget):
         self._stop_event.set()
         if self._run_worker is not None:
             self._run_worker.quit()
-            self._plate_map_data = {}
-            self._genotype_pm = None
-            self._treatment_pm = None
+            self.clear()
+
+    def clear(self) -> None:
+        """Clear all variables for a new run."""
+        self._plate_map_data = {}
+        self.recording_folder_path = []
+        self.labels_folder_path = []
+        self._analysis_data = {}
+        self._genotype_pm = None
+        self._treatment_pm = None
+        self._stimulated_area_mask = None
 
     def _run(self) -> None:
         """Run the batch analysis."""
@@ -303,17 +311,8 @@ class BatchAnalysis(QWidget):
 
     def _on_worker_finished(self) -> None:
         """Called when the extraction is finished."""
-        print("Extraction of traces finished.")
-
         self._enable(True)
-
-        # # show a message box if there are failed labels
-        # if self._failed_labels:
-        #     msg = (
-        #         "The following labels were not found during the analysis:\n\n"
-        #         + "\n".join(self._failed_labels)
-        #     )
-        #     self._show_and_log_error(msg)
+        self.clear()
 
     def _enable(self, enable: bool) -> None:
         """Enable or disable the widgets."""
@@ -398,9 +397,7 @@ class BatchAnalysis(QWidget):
                         break
                     try:
                         future.result()
-                        print(f"Chunk {idx + 1} completed.")
                     except Exception as e:
-                        print(f"future result: {future.result()} at {f}")
                         print(f"An error occurred inside: {e}")
                         break
 
