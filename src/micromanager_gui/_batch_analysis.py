@@ -235,14 +235,10 @@ class BatchAnalysis(QWidget):
         for rec_folder, label_folder in zip(
             self.recording_folder_path, self.labels_folder_path
         ):
-            # self._analysis_folder(rec_folder, label_folder, stimulated)
-            print("rec: ", rec_folder)
-            print("label: ", label_folder)
+            self._analysis_folder(rec_folder, label_folder, stimulated)
             self._analysis_data = {}
 
         self.clear()
-        print("after clearing, rec folder: ", len(self.recording_folder_path))
-        print("after clearing, label folder: ", len(self.labels_folder_path))
 
     def _find_recording_label_folders(self, root_folder: str) -> None:
         """Zip recording folder with label folder."""
