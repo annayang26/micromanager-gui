@@ -268,9 +268,9 @@ class PlateViewer(QMainWindow):
         self._set_splitter_sizes()
 
         # TO REMOVE, IT IS ONLY TO TEST________________________________________________
-        # data = "/Users/fdrgsp/Desktop/t/ts.tensorstore.zarr"
-        # self._labels_path = "/Users/fdrgsp/Desktop/test/ts_labels"
-        # self._analysis_files_path = "/Users/fdrgsp/Desktop/test/ts_analysis"
+        # data = r'/Volumes/Expansion/test/NC240503_240627_Chronic/NC240503_240627_Chronic.tensorstore.zarr'
+        # self._labels_path = r'/Volumes/Expansion/test/NC240503_240627_Chronic/test_label'
+        # self._analysis_files_path = r'/Volumes/Expansion/test/NC240503_240627_Chronic/test_250321'
         # reader = TensorstoreZarrReader(data)
         # self._init_widget(reader)
         # ____________________________________________________________________________

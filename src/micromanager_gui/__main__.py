@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING
 from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import QApplication
 
-from micromanager_gui import CellposeBatchSegmentation, MicroManagerGUI, PlateViewer
+from micromanager_gui import (
+    BatchAnalysis,
+    CellposeBatchSegmentation,
+    MicroManagerGUI,
+    PlateViewer,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -17,6 +22,7 @@ if TYPE_CHECKING:
 
 WALLE_ICON = Path(__file__).parent / "icons" / "wall_e_icon.png"
 CELLPOSE_ICON = Path(__file__).parent / "icons" / "cellpose_icon.png"
+BATCH_PROCESS_ICON = Path(__file__).parent / "icons" / "batch_process.png"
 
 
 def main(args: Sequence[str] | None = None) -> None:
@@ -72,6 +78,15 @@ def batch_cellpose() -> None:
     app.setWindowIcon(QIcon(str(CELLPOSE_ICON)))
     cp = CellposeBatchSegmentation()
     cp.show()
+    sys.excepthook = _our_excepthook
+    app.exec()
+
+def batch_analysis() -> None:
+    """Open the Batch Anlysis."""
+    app = QApplication([])
+    app.setWindowIcon(QIcon(str(BATCH_PROCESS_ICON)))
+    ba = BatchAnalysis()
+    ba.show()
     sys.excepthook = _our_excepthook
     app.exec()
 
