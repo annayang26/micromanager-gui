@@ -206,7 +206,8 @@ def _plot_multi_cond_data(
     #   labels=cond_ordered)
 
     # boxplot
-    ax.boxplot(data_list, tick_labels=final_cond, whis=(0, 100))
+    ax.boxplot(data_list, whis=(0, 100))
+    ax.set_xticks(range(1, len(final_cond) + 1), final_cond, rotation=45, ha="right")
 
     _set_axis_labels(ax, amp, freq, iei, cell_size, sync, cell_size_unit)
 
