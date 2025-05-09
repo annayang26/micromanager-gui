@@ -6,6 +6,7 @@ import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import mplcursors
 import numpy as np
+from scipy.linalg import eigh
 
 from micromanager_gui._plate_viewer._util import _get_synchrony, _get_synchrony_matrix
 
@@ -83,6 +84,79 @@ def _get_phase_dict_from_rois(
             phase_dict[roi] = phase_list
 
     return phase_dict
+
+def _synchrony_cluster(sync_matrix: np.ndarray):
+    """Cluster the neurons based on their synchrony."""
+    eig_val, eig_vec = eigh(sync_matrix)
+    diag_matrix = np.diag(eig_vec)
+
+
+def _amplitude_adjusted_fourier_transform(dec_dff: list[float], n_sur: int = 1
+                                          ) -> np.ndarray:
+    """Perform AAFT for surrogation of synchrony."""
+    dec_dff_arr = np.asarray(dec_dff)
+    n = len(dec_dff)
+    surr_matrix = np.full((n, n_sur), np.nan)
+
+    sort_dec_dff_arr = np.sort(dec_dff_arr)
+    t = np.argsort(dec_dff_arr)
+    ixV = np.argsort(t)
+
+    for i_sur in range(n_sur):
+        # create white noise based on Gaussian distribution
+        wn = np.random.rand(n) * np.std(dec_dff_arr)
+        sort_wn = np.sort(wn)
+        rank_wn = sort_wn[ixV]
+
+        # Fourier transform, phase randomization, inverse fourier transform
+        if n%2 == 0:
+            n2 = n//2
+        else:
+            n2 = (n-1)//2
+
+        tmpv = np.fft.fft(rank_wn, n=2*n2)
+        magnV = np.abs(tmpv)
+        fiv = np.angle(tmpv)
+        rfiv = np.random.rand(n2-1)*2*np.pi
+        nfiv = np.concatenate(([0], rfiv, [fiv[n2]], -np.flip(rfiv)))
+
+        tmpv = np.concatenate((magnV[:n2+1], np.flip(magnV[1:n2])))
+        tmpv = tmpv * np.exp(1j * nfiv)
+        yftv = np.real(np.fft.ifft(tmpv, n=n))
+
+        # Re-rank original array to match rank of phase-ramdomized series
+        t2 = np.argsort(yftv)
+        iyftv = np.argsort(t2)
+        surr_matrix[:, i_sur] = sort_dec_dff_arr[iyftv]
+
+    return surr_matrix # shape(# frames, n_sur)
+
+def generate_surrogate(roi_data_dict: dict[str, ROIData], num_frame: int,
+                       rois: list[int] | None = None, n_sur: int = 20):
+    """Surrogate the synchrony index."""
+    if rois is None:
+        rois = [int(roi) for roi in roi_data_dict if roi.isdigit()]
+
+    # if less than two rois input, can't calculate synchrony
+    if len(rois) < 2:
+        return None
+
+    
+
+    for roi, roi_data in roi_data_dict.items():
+        if int(roi) not in rois:
+            continue
+        if (phase_list := roi_data.instantaneous_phase) is not None:
+            true_phase = phase_list
+        if (dec_dff_list := roi_data.dec_dff) is not None:
+            aaft_matrix = _amplitude_adjusted_fourier_transform(dec_dff_list)
+
+        print(f"shape of true phase: {len(true_phase)}")
+        print(f"    shape of aaft matrix: {aaft_matrix.shape}")
+        deltaphi = np.mod(true_phase-)
+
+def _compare_sync_matrix(real_matrix: np.ndarray, synt_matrix: np.ndarray):
+    """Compare the real matrix with the synthetic matrix."""
 
 
 def _add_hover_functionality(
