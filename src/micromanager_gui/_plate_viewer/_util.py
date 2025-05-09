@@ -66,6 +66,11 @@ STIMULATED_ROIS = "Stimulated vs Non-Stimulated ROIs"
 STIMULATED_ROIS_WITH_STIMULATED_AREA = (
     "Stimulated vs Non-Stimulated ROIs with Stimulated Area"
 )
+STIMULATED_VS_NON_STIMULATED_DEC_DFF_NORMALIZED_WITH_PEAKS = (
+    "Stimulated vs Non-Stimulated Normalized with Peaks (Deconvolved DeltaF/F0)"
+)
+STIMULATED_PEAKS_AMP = "Stimulated Peaks Amplitudes"
+SPONTANEOUS_PEAKS_AMP = "Spontaneous Peaks Amplitudes (non due to stimulation)"
 GLOBAL_SYNCHRONY = "Global Synchrony"
 
 SINGLE_WELL_COMBO_OPTIONS = [
@@ -87,6 +92,9 @@ SINGLE_WELL_COMBO_OPTIONS = [
     STIMULATED_AREA,
     STIMULATED_ROIS,
     STIMULATED_ROIS_WITH_STIMULATED_AREA,
+    STIMULATED_VS_NON_STIMULATED_DEC_DFF_NORMALIZED_WITH_PEAKS,
+    STIMULATED_PEAKS_AMP,
+    SPONTANEOUS_PEAKS_AMP,
     GLOBAL_SYNCHRONY,
 ]
 
@@ -132,6 +140,11 @@ class ROIData(BaseClass):
     instantaneous_phase: list[float] | None = None
     iei: list[float] | None = None  # interevent interval
     stimulated: bool = False
+    # this is the amp of the peaks of the roi that are due to the stimulation event
+    amplitudes_stimulated_peaks: dict[str, list[float]] | None = None
+    # this is the amp of the peaks of the roi that are not due to the stimulation event
+    # but are due to the spontaneous activity of the roi
+    amplitudes_spontaneous_peaks: list[float] | None = None
     # ... add whatever other data we need
 
 
@@ -517,8 +530,15 @@ def create_stimulation_mask(stimulation_file: str) -> np.ndarray:
     blue_img = tifffile.imread(stimulation_file)
 
     # check if the image is already a binary mask
-    if np.unique(blue_img).size == 2:
+    unique = np.unique(blue_img)
+    # if only pne values which is 1 (full fov illumination)
+    if unique.size == 1 and unique[0] == 1:
         return blue_img  # type: ignore
+    # if only two values which are 0 and 1 (binary mask)
+    elif unique.size == 2:
+        # if the image is already a binary mask, return it
+        if unique[0] == 0 and unique[1] == 1:
+            return blue_img  # type: ignore
 
     # apply Gaussian Blur to reduce noise
     blur = filters.gaussian(blue_img, sigma=2)

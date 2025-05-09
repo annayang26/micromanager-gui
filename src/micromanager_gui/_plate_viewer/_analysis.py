@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -12,6 +13,7 @@ import tifffile
 import useq
 from fonticon_mdi6 import MDI6
 from oasis.functions import deconvolve
+from pymmcore_widgets.useq_widgets._mda_sequence import PYMMCW_METADATA_KEY
 from qtpy.QtCore import QSize, Signal
 from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
@@ -74,7 +76,7 @@ CAMERA_KEY = "camera_metadata"
 SPONTANEOUS = "Spontaneous Activity"
 EVOKED = "Evoked Activity"
 EXCLUDE_AREA_SIZE_THRESHOLD = 10
-STIMULATION_AREA_THRESHOLD = 0.5  # 50%
+STIMULATION_AREA_THRESHOLD = 0.1  # 10%
 
 
 def single_exponential(x: np.ndarray, a: float, b: float, c: float) -> np.ndarray:
@@ -383,14 +385,16 @@ class _AnalyseCalciumTraces(QWidget):
         if not (analysis_path := self._get_valid_output_path()):
             return None
 
-        if self._is_stimulated() and not self._prepare_stimulation_mask(analysis_path):
+        if self._is_evoked_experiment() and not self._prepare_stimulation_mask(
+            analysis_path
+        ):
             return None
 
         self._min_peaks_height = self._min_peaks_height_spin.value()
 
         return self._get_positions_to_analyze()
 
-    def _is_stimulated(self) -> bool:
+    def _is_evoked_experiment(self) -> bool:
         """Return True if the activity type is evoked."""
         activity_type = self._experiment_type_combo.currentText()
         return activity_type == EVOKED  # type: ignore
@@ -688,7 +692,15 @@ class _AnalyseCalciumTraces(QWidget):
         )
 
         # check if it is an evoked activity experiment
-        stimulated = self._is_stimulated()
+        evoked_experiment = self._is_evoked_experiment()
+
+        # get the stimulation metadata if it is an evoked activity experiment
+        evoked_experiment_meta: dict[str, Any] | None = None
+        if evoked_experiment:
+            event = meta[0].get(event_key, {})
+            seq = event.get("sequence", {})
+            metadata = seq.get("metadata", {}).get(PYMMCW_METADATA_KEY, {})
+            evoked_experiment_meta = metadata.get("stimulation")
 
         LOGGER.info(f"Extracting Traces from Well {fov_name}.")
         for label_value, label_mask in tqdm(
@@ -701,13 +713,14 @@ class _AnalyseCalciumTraces(QWidget):
             self._process_roi_trace(
                 data,
                 meta,
+                evoked_experiment_meta,
                 fov_name,
                 label_value,
                 label_mask,
                 timepoints,
                 exp_time,
                 tot_time_sec,
-                stimulated,
+                evoked_experiment,
                 elapsed_time_list,
             )
 
@@ -778,17 +791,18 @@ class _AnalyseCalciumTraces(QWidget):
         self,
         data: np.ndarray,
         meta: list[dict],
+        evoked_experiment_meta: dict[str, Any] | None,
         fov_name: str,
         label_value: int,
         label_mask: np.ndarray,
         timepoints: int,
         exp_time: float,
         tot_time_sec: float,
-        stimulated: bool,
+        evoked_experiment: bool,
         elapsed_time_list: list[float],
     ) -> None:
         """Process individual ROI traces."""
-        # calculate the mean trace for the roi
+        # get the data for the current label
         masked_data = data[:, label_mask]
 
         # get the size of the roi in µm or px if µm is not available
@@ -796,7 +810,7 @@ class _AnalyseCalciumTraces(QWidget):
         px_size = meta[0].get("PixelSizeUm", None)
         # calculate the size of the roi in µm if px_size is available or not 0,
         # otherwise use the size is in pixels
-        roi_size = roi_size_pixel * px_size if px_size else roi_size_pixel
+        roi_size = roi_size_pixel * (px_size**2) if px_size else roi_size_pixel
 
         # exclude small rois, might not be necessary if trained cellpose performs
         # better
@@ -805,7 +819,7 @@ class _AnalyseCalciumTraces(QWidget):
 
         # check if the roi is stimulated
         roi_stimulation_overlap_ratio = 0.0
-        if stimulated and self._stimulated_area_mask is not None:
+        if evoked_experiment and self._stimulated_area_mask is not None:
             roi_stimulation_overlap_ratio = get_overlap_roi_with_stimulated_area(
                 self._stimulated_area_mask, label_mask
             )
@@ -846,12 +860,54 @@ class _AnalyseCalciumTraces(QWidget):
         # get the amplitudes of the peaks in the dec_dff trace
         peaks_amplitudes_dec_dff = [dec_dff[p] for p in peaks_dec_dff]
 
+        # check if the roi is stimulated
+        is_roi_stimulated = roi_stimulation_overlap_ratio > STIMULATION_AREA_THRESHOLD
+
+        # to store the amplitudes of the stimulated peaks as dict:
+        # {power_pulselength: [amplitude]}
+        # and non stimulated peaks as list: [amplitude]
+        amplitudes_stimulated_peaks: dict[str, list[float]] = {}
+        amplitudes_spontaneous_peaks: list[float] = []
+
+        # if the experiment is evoked, get the amplitudes of the stimulated peaks
+        if (
+            evoked_experiment
+            and evoked_experiment_meta is not None
+            and is_roi_stimulated
+            and len(peaks_dec_dff) > 0
+        ):
+            non_stim_peaks_idx: list[float] = peaks_dec_dff.tolist().copy()
+            # get the stimulation info from the metadata (if any)
+            frames_and_powers = evoked_experiment_meta.get("pulse_on_frame", {})
+            sorted_peaks_dec_dff = list(sorted(peaks_dec_dff))  # noqa: C413
+            for frame, power in frames_and_powers.items():
+                stim_frame = int(frame) + 1
+                # find index of first peak >= stim_frame
+                i = bisect.bisect_left(sorted_peaks_dec_dff, stim_frame)
+                peak_idx = sorted_peaks_dec_dff[i]
+                # check if the peak is on the stimulation frame or in the next 5 frames
+                if peak_idx >= stim_frame and peak_idx <= stim_frame + 5:
+                    amplitude = dec_dff[peak_idx]
+                    pulse_len = evoked_experiment_meta.get(
+                        "led_pulse_duration", "unknown"
+                    )
+                    col = f"{power}_{pulse_len}"
+                    amplitudes_stimulated_peaks.setdefault(col, []).append(amplitude)
+                    # remove the peak from the non stimulated peaks
+                    non_stim_peaks_idx.remove(peak_idx)
+            amplitudes_spontaneous_peaks = [dec_dff[pk] for pk in non_stim_peaks_idx]
+
         # calculate the frequency of the peaks in the dec_dff trace
-        frequency = len(peaks_dec_dff) / tot_time_sec if tot_time_sec else None
+        frequency = (
+            len(peaks_dec_dff) / tot_time_sec
+            if tot_time_sec and len(peaks_dec_dff) > 0
+            else None
+        )
 
         # get the conditions for the well
         condition_1, condition_2 = self._get_conditions(fov_name)
 
+        # calculate the linear phase of the peaks in the dec_dff trace
         instantaneous_phase = (
             get_linear_phase(timepoints, peaks_dec_dff)
             if len(peaks_dec_dff) > 0
@@ -885,7 +941,9 @@ class _AnalyseCalciumTraces(QWidget):
             active=len(peaks_dec_dff) > 0,
             instantaneous_phase=instantaneous_phase,
             iei=iei,
-            stimulated=roi_stimulation_overlap_ratio > STIMULATION_AREA_THRESHOLD,
+            stimulated=is_roi_stimulated,
+            amplitudes_stimulated_peaks=amplitudes_stimulated_peaks or None,
+            amplitudes_spontaneous_peaks=amplitudes_spontaneous_peaks or None,
         )
 
     def _get_conditions(self, pos_name: str) -> tuple[str | None, str | None]:
